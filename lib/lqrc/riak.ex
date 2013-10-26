@@ -104,6 +104,11 @@ defmodule LQRC.Riak do
   defp update_map({k, v}, acc) when is_binary(v), do:
     :riakc_map.update({k, :register}, fn(reg) -> :riakc_register.set v, reg end, acc)
 
+  defp update_map({k, v}, acc) when is_float(v) do
+    v = iolist_to_binary(:io_lib.format("~g", [v]))
+    :riakc_map.update({k, :register}, fn(reg) -> :riakc_register.set v, reg end, acc)
+  end
+
   defp update_map({k, true}, acc), do:
     :riakc_map.update({k, :flag}, fn(flag) -> :riakc_flag.enable flag end, acc)
 
