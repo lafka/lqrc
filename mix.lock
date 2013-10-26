@@ -1,0 +1,9 @@
+[ "eredis": {:git, "git://github.com/wooga/eredis.git", "313fce73b0fdb53f3a5f146a7adf19677b417cb5", [{:tag, "v1.0.6"}]},
+  "goldrush": {:git, "git://github.com/DeadZen/goldrush.git", "879c69874a555b2c13498aa4a3da6f6bbbb6a031", [{:tag, "879c69874a"}]},
+  "lager": {:git, "git://github.com/basho/lager.git", "169cffd94759e99e2e8870b125861a91e3c1482a", [{:tag, "2.0.0"}]},
+  "meck": {:git, "git://github.com/basho/meck.git", "1286aba1cb6bbd6c9fc3f817740758b224843ee7", [{:tag, "0.8.1"}]},
+  "pooler": {:git, "git://github.com/seth/pooler.git", "37da392e5de1d8b9bfa277e2e13238b6610a1cd7", [{:tag, "1.0.0"}]},
+  "protobuffs": {:git, "git://github.com/basho/erlang_protobuffs.git", "0b00f9031cda5ffe83a3d183e14f2dc918bc2932", [{:tag, "0.8.1p2"}]},
+  "redq": {:git, "git://github.com/lafka/redq.git", "ed6f1a6b0cf34089cfe6a0ea89f9c68525413840", [{:tag, "0.1.0"}]},
+  "riak_pb": {:git, "git://github.com/basho/riak_pb", "2adf207d053738559811eb17f62f7ce6b6f5cc95", [{:tag, "2.0.0.7"}]},
+  "riakc": {:git, "git://github.com/basho/riak-erlang-client.git", "0b02f8f50f39b58cc3de13952c52eb0c31c93f1c", [{:branch, "master"}]} ]
