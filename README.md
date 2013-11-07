@@ -8,6 +8,9 @@ Provide a clean interface for writing domain specific objects to Riak
 and possibly maintaining a PUB/SUB notification system to synchronise
 events across a cluster using `redq` and `redis`.
 
+
+**This is highly experimental, API will break your data will be lost**
+
 ## @todo
 
 + Integrate with Yokozuna (requires upstream changes)

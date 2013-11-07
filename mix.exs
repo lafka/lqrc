@@ -9,15 +9,13 @@ defmodule LRQC.Mixfile do
   end
 
   def application do
-    [ applications: [ :lager, :pooler, :redq ],
+    [ applications: [ :pooler ],
       env: []
     ]
   end
 
   defp deps do
     [ {:riakc, github: "basho/riak-erlang-client", branch: "master"},
-      {:pooler, github: "seth/pooler", tag: "1.0.0"},
-      {:lager, github: "basho/lager", tag: "2.0.0"},
-      {:redq, github: "lafka/redq", tag: "0.1.0"}]
+      {:pooler, github: "seth/pooler", tag: "1.0.0"} ]
   end
 end
