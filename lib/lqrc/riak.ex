@@ -5,7 +5,7 @@ defmodule LQRC.Riak do
   require LQRC.Pooler
   LQRC.Pooler.__using__([group: :riak])
 
-  def write(domain, sel, vals, spec, opts // []) do
+  def write(domain, sel, vals, spec, opts) do
     vals = List.keystore vals, "key", 1, {"key", List.last sel}
 
     if spec[:datatype] do
@@ -15,7 +15,7 @@ defmodule LQRC.Riak do
     end
   end
 
-  def reduce(domain, sel, vals, spec, opts // []) do
+  def reduce(domain, sel, vals, spec, opts) do
     if spec[:datatype] do
       modify domain, sel, spec, __MODULE__.CRDT.reduce(vals, spec), opts
     else
@@ -34,7 +34,7 @@ defmodule LQRC.Riak do
     pid:    pid()     %% Pid to use instead of fetching one from pooler
     decode: boolean() %% Whetever to decode the value return from riak pb
   """
-  def read(domain, sel, spec, opts // []) do
+  def read(domain, sel, spec, opts) do
     {bucket, key} = genkey domain, sel, spec
 
     decode = :proplists.get_value :decode, opts, true
@@ -60,7 +60,7 @@ defmodule LQRC.Riak do
     end
   end
 
-  defp modify(domain, sel, spec, fun, opts // []) do
+  defp modify(domain, sel, spec, fun, opts) do
     {bucket, key} = genkey domain, sel, spec
 
     return? = opts[:return]
@@ -76,7 +76,7 @@ defmodule LQRC.Riak do
 
               # in case of siblings, select the first and let decode
               # merge all the values as required.
-              if :riakc_obj.value_count obj do
+              if merge? && :riakc_obj.value_count obj do
                 obj = :riakc_obj.select_sibling(1, obj)
               end
 
@@ -94,7 +94,7 @@ defmodule LQRC.Riak do
 
     with_pid modfun, opts[:pid], fn
       (:ok, pid) when return? ->
-        read(domain, sel, [{:pid, pid} | opts])
+        read(domain, sel, spec, [{:pid, pid} | opts])
 
       (res, pid) ->
         return res, pid
@@ -109,6 +109,60 @@ defmodule LQRC.Riak do
     #    IO.inspect res
     #    res
     #end
+  end
+
+  def range(domain, sel, a, b, spec, opts) do
+    {bucket, idx} = genkey domain, sel, spec
+    fun = if opts[:expand] do
+        input = {:index, bucket, idx, a, b}
+        phases = [
+          {:map, {:modfun, :lqrc_mr, :robject}, :get_values, true}]
+
+        &PB.mapred(&1, input, phases)
+      else
+        &PB.get_index_range(&1, bucket, idx, a, b)
+      end
+
+    with_pid fun, opts[:pid], fn
+      ({:ok, [{0, vals}]}, pid) ->
+        return :ok, pid
+        {:ok, __MODULE__.Obj.decode(vals, false)}
+
+      ({:ok, {:index_results_v1, keys, _, _}}, pid) ->
+        return :ok, pid
+        {:ok, keys}
+
+      (res, pid) ->
+        return res, pid
+    end
+  end
+
+  def index(domain, sel, val, spec, opts) do
+    {bucket, idx} = genkey domain, sel, spec
+
+    # to map/reduce or not to map/reduce
+    fun = if opts[:expand] do
+        input = {:index, bucket, idx, val}
+        phases = [
+          {:map, {:modfun, :lqrc_mr, :robject}, :get_values, true}]
+
+        &PB.mapred(&1, input, phases)
+      else
+        &PB.get_index_eq(&1, bucket, idx, val)
+      end
+
+    with_pid fun, opts[:pid], fn
+      ({:ok, [{0, vals}]}, pid) ->
+        return :ok, pid
+        {:ok, __MODULE__.Obj.decode(vals, false)}
+
+      ({:ok, {:index_results_v1, keys, _, _}}, pid) ->
+        return :ok, pid
+        {:ok, keys}
+
+      (res, pid) ->
+        return res, pid
+    end
   end
 
   @doc """
@@ -188,13 +242,23 @@ defmodule LQRC.Riak do
 
     If the object have siblings these will be recursively merged
     """
-    def decode(obj) do
-      case :riakc_obj.get_contents(obj) do
+    def decode(obj, robject // true) do
+      val = if robject do
+          :riakc_obj.get_contents(obj)
+        else
+          obj
+        end
+      case val do
         [] ->
           []
 
-        siblings ->
+        [{_,_}|_] = siblings ->
           siblings = lc {_md, v} inlist siblings do v end
+          Enum.reduce siblings, [], fn(o, acc) ->
+            ukeymergerec(binary_to_term(o), acc)
+          end
+
+        [_|_] = siblings ->
           Enum.reduce siblings, [], fn(o, acc) ->
             ukeymergerec(binary_to_term(o), acc)
           end

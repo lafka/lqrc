@@ -20,14 +20,14 @@ defmodule LQRC do
     Riak.read domain, sel, spec, opts
   end
 
-  def list(domain, sel), do: list(domain, sel, [])
-
-  def list(domain, {:index, idx}, opts) do
-    {:error, :notfound}
+  def range(domain, sel, a, b, opts // []) do
+    spec = Domain.read domain
+    Riak.range domain, sel, a, b, spec, opts
   end
 
-  def list(domain, {:range, a, b}, opts) do
-    {:error, :notfound}
+  def index(domain, sel, val, opts // []) do
+    spec = Domain.read domain
+    Riak.index domain, sel, val, spec, opts
   end
 
   def query(domain, q) do
