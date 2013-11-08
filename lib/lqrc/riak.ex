@@ -72,19 +72,19 @@ defmodule LQRC.Riak do
         fn(p) ->
           case PB.get(p, bucket, key) do
             {:ok, obj} ->
-              val = term_to_binary fun.(__MODULE__.Obj.decode(obj))
+              obj = fun.(obj)
 
               # in case of siblings, select the first and let decode
               # merge all the values as required.
-              if merge? && :riakc_obj.value_count obj do
+              if merge? && :riakc_obj.value_count obj > 1 do
                 obj = :riakc_obj.select_sibling(1, obj)
               end
 
-              PB.put p, :riakc_obj.update_value(obj, val)
+              PB.put p, obj
 
             {:error, :notfound} ->
-              val = term_to_binary fun.([])
-              PB.put p, :riakc_obj.new(bucket, key, val, [])
+              obj = fun.(:riakc_obj.new(bucket, key, "", []))
+              PB.put p, obj
 
             ret ->
               ret
@@ -113,6 +113,9 @@ defmodule LQRC.Riak do
 
   def range(domain, sel, a, b, spec, opts) do
     {bucket, idx} = genkey domain, sel, spec
+
+    idx = maybe_expand_idx(idx, spec)
+
     fun = if opts[:expand] do
         input = {:index, bucket, idx, a, b}
         phases = [
@@ -140,6 +143,8 @@ defmodule LQRC.Riak do
   def index(domain, sel, val, spec, opts) do
     {bucket, idx} = genkey domain, sel, spec
 
+    idx = maybe_expand_idx(idx, spec)
+
     # to map/reduce or not to map/reduce
     fun = if opts[:expand] do
         input = {:index, bucket, idx, val}
@@ -165,6 +170,15 @@ defmodule LQRC.Riak do
     end
   end
 
+  defp maybe_expand_idx(idx, spec) do
+    case (lc {_, ^idx} = i inlist spec[:index] do i end) do
+      []  -> idx
+      [{t, k}|_] ->
+        {:ok, str} = String.to_char_list k
+        {t, str}
+    end
+  end
+
   @doc """
   Create the riak {bucket, key} pair.
 
@@ -176,7 +190,7 @@ defmodule LQRC.Riak do
   defp genkey(domain, sel, spec // nil) do
     case sel do
       [key] ->
-        {"_", key}
+        {atom_to_binary(domain), key}
 
       sel when spec === nil ->
         {a, [b]} = Enum.split sel, length(sel) - 1
@@ -197,17 +211,35 @@ defmodule LQRC.Riak do
     """
 
     @doc """
-    Closure for updating
+    Closure for updating riak objects
     """
-    def update(vals, spec) do
-      if spec[:merge_updates] do
-        fn(oldvals) ->
-          ukeymergerec(vals, oldvals)
+   def update(vals, spec) do
+      fn(obj) ->
+        vals = cond do
+          spec[:merge_updates] -> ukeymergerec(vals, decode(obj))
+                          true -> vals
         end
-      else
-        fn(_) ->
-          vals
+
+        # Add indexes if they exist
+        IO.inspect {:spec, spec}
+        md = case spec[:index] do
+          [_|_] = indexes ->
+            md = :riakc_obj.get_update_metadata obj
+            md = Enum.reduce indexes, md, fn({t, k} = idx, acc) ->
+                IO.inspect {:idx, idx, vals[k]}
+                case vals[k] do
+                  [_|_] = vals -> :riakc_obj.add_secondary_index(acc, {idx, vals})
+                  nil -> raise "no such index: #{spec[:domain]}:#{idx}"
+                  val -> :riakc_obj.add_secondary_index(acc, {idx, [val]})
+                end
+            end
+            obj = :riakc_obj.update_metadata obj, md
+
+          _ ->
+            obj
         end
+
+        :riakc_obj.update_value(obj, term_to_binary(vals))
       end
     end
 
@@ -217,9 +249,16 @@ defmodule LQRC.Riak do
     """
     def ukeymergerec([], b), do: b
     def ukeymergerec([{k, v} | rest], b) do
+      set? = is_list(v) && length(v) > 0 && is_binary(hd(v))
       v = case b[k] do
-        oldval when is_list(v) ->
+        oldval when !set? and is_list(v) ->
           ukeymergerec(v, oldval || [])
+
+        oldval when set? and is_list(v) and is_list(oldval) ->
+          :lists.usort(v ++ oldval)
+
+        oldval when set? and is_list(v) ->
+          :lists.usort(v)
 
         _ ->
           v
