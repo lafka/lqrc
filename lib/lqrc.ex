@@ -1,38 +1,44 @@
 defmodule LQRC do
 
-  require LQRC.Riak, as: Riak
-
   require LQRC.Domain, as: Domain
 
+  @backend LQRC.Riak
+
   def write(domain, sel, vals, opts // []) do
-    spec = Domain.read domain
-    Riak.write domain, sel, vals, spec, opts
+    call(domain, :write, [sel, vals, opts])
   end
 
-  def reduce(domain, sel, vals, opts // []) do
-    spec = Domain.read domain
+  def update(domain, sel, vals, opts // [], obj // nil), do:
+    call(domain, :update, [sel, vals, opts, obj])
 
-    Riak.reduce domain, sel, vals, spec, opts
+  def read(domain, sel, opts // []), do:
+    call(domain, :read, [sel, opts])
+
+  def delete(domain, sel, opts // []), do:
+    call(domain, :delete, [sel, opts])
+
+  def range(domain, sel, a, b, opts // []), do:
+    call(domain, :range, [sel, a, b, opts])
+
+  def tagged(domain, sel, val, opts // []), do:
+    call(domain, :tagged, [sel, val, opts])
+
+  def query(domain, q, opts // []), do:
+    call(domain, :query, [q, opts])
+
+  defp call(domain, fun, args) when is_atom(domain) do
+    call(Domain.read!(domain), fun, args)
   end
+  defp call(spec, fun, args) do
+    argc = length(args) + 1
 
-  def read(domain, sel, opts // []) do
-    spec = Domain.read domain
-    Riak.read domain, sel, spec, opts
-  end
+   :erlang.fun_info &LQRC.Riak.write/4
+    case function_exported? @backend, fun, argc do
+      true ->
+        Kernel.apply LQRC.Riak, fun, [spec | args]
 
-  def range(domain, sel, a, b, opts // []) do
-    spec = Domain.read domain
-    Riak.range domain, sel, a, b, spec, opts
-  end
-
-  def index(domain, sel, val, opts // []) do
-    spec = Domain.read domain
-    Riak.index domain, sel, val, spec, opts
-  end
-
-  def query(domain, q) do
-    spec = Domain.read domain
-
-    Riak.query domain, q, spec
+      false ->
+        {:error, {:inaccessible_fun, {@backend, fun, argc}}}
+    end
   end
 end

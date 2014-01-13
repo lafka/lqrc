@@ -1,107 +1,131 @@
 defmodule LQRC.Riak do
 
   require :riakc_pb_socket, as: PB
+  require :riakc_obj, as: RObj
 
+  require LQRC.ContentType, as: ContentType
   require LQRC.Pooler
   LQRC.Pooler.__using__([group: :riak])
 
-  def write(domain, sel, vals, spec, opts) do
-    vals = List.keystore vals, "key", 1, {"key", List.last sel}
-
-    if spec[:datatype] do
-      modify domain, sel, spec, __MODULE__.CRDT.update(vals, spec), opts
-    else
-      modify domain, sel, spec, __MODULE__.Obj.update(vals, spec), opts
-    end
-  end
-
-  def reduce(domain, sel, vals, spec, opts) do
-    if spec[:datatype] do
-      modify domain, sel, spec, __MODULE__.CRDT.reduce(vals, spec), opts
-    else
-      modify domain, sel, spec, __MODULE__.Obj.reduce(vals, spec), opts
+  defmacro left :: right do
+    quote do
+      case unquote(left) do
+        {:ok, res} -> res |> unquote(right)
+        res -> res
+      end
     end
   end
 
   @doc """
-  Read `sel` in `domain`
+  Write the content of `vals` into `sel`, possibly overwriting old
+  data depending on bucket properties.
 
-  Based on the domain type fetches a CRDT or riak object and maybe
-  decodes it.
-
-  Opts can be one of:
-    riak:   [term()]  %% Terms to pass to the riak function
-    pid:    pid()     %% Pid to use instead of fetching one from pooler
-    decode: boolean() %% Whetever to decode the value return from riak pb
+  @todo 2014-01-14; add support for rolling back partial fails
   """
-  def read(domain, sel, spec, opts) do
-    {bucket, key} = genkey domain, sel, spec
+  def write(spec, sel, vals, opts, obj // nil, oldvals // nil) do
+    putopts = (opts[:putopts] || []) ++ (spec[:riak][:putopts] || [])
+    opts = List.keystore opts, :putopts, 0, {:putopts, putopts}
 
-    decode = :proplists.get_value :decode, opts, true
+    rollback = case obj do
+      nil ->
+        fn() -> delete spec, sel, opts end
 
-    fun = if spec[:datatype] do
-        &PB.fetch_type(&1, bucket, key, opts[:readopts] || [])
-      else
-        &PB.get(&1, bucket, key, opts[:readopts] || [])
-    end
-
-    with_pid fun, opts[:pid], fn
-      ({:ok, ret}, p) ->
-        return p
-
-        if spec[:datatype] do
-          __MODULE__.CRDT.decode(ret)
+      ^obj ->
+        if oldvals do # re-fetch object and write back oldvals
+          fn() -> update(spec, sel, oldvals, opts, nil) end
         else
-          __MODULE__.Obj.decode(ret)
+          fn() -> {:error, "nothing to rollback to"} end
         end
+    end
 
-      (ret, p) ->
-        return ret, p
+    ((({:ok, set_key(spec[:datatype], spec[:key], sel, vals)}
+      |> dofun(spec, spec[:prewrite], sel))
+      :: write_obj(spec, sel, obj, opts))
+      :: decode spec)
+      |> dofun_rollback(spec, spec[:postwrite], sel, [], rollback)
+  end
+
+  @doc """
+  Write the content of `vals` into `sel` by merging it with previous data
+
+  @todo 2014-01-14; add support for rolling back partial fails
+  """
+  def update(spec, sel, vals, opts, nil) do
+    case read_obj spec, sel, opts do
+      {:ok, obj} -> update spec, sel, vals, opts, obj
+      err -> err
     end
   end
 
-  defp modify(domain, sel, spec, fun, opts) do
-    {bucket, key} = genkey domain, sel, spec
+  def update(spec, sel, vals, opts, obj) do
+      {md, oldvals} = decode_md obj
+      obj  = if nil != md do RObj.update_metadata obj, md else obj end
+      vals = ukeymergerec vals, oldvals
 
-    return? = opts[:return]
-    merge?  = spec[:merge] || false
+      putopts = (opts[:putopts] || []) ++ (spec[:riak][:putopts] || [])
+      putopts = [:if_not_modified | putopts]
+      opts = List.keystore opts, :putopts, 0, {:putopts, putopts}
+      write spec, sel, vals, opts, obj, oldvals
+  end
 
-    modfun = if spec[:datatype] do
-        &PB.modify_type &1, fun, bucket, key, opts[:writeopts] || []
-      else
-        fn(p) ->
-          case PB.get(p, bucket, key) do
-            {:ok, obj} ->
-              obj = fun.(obj)
+  @doc """
+  Read the contents of `sel` and maybe issue a write request to
+  resolve siblings
+  """
+  def read(spec, sel, opts) do
+    passobj? = opts[:return_obj]
+    case read_obj spec, sel, opts do
+      {:ok, obj} ->
+        case spec[:datatype] || decode_md obj do
+          {nil, vals} when passobj? ->
+            {:ok, vals, obj}
 
-              # in case of siblings, select the first and let decode
-              # merge all the values as required.
-              if merge? && :riakc_obj.value_count obj > 1 do
-                obj = :riakc_obj.select_sibling(1, obj)
-              end
+          {nil, vals} ->
+            {:ok, vals}
 
-              PB.put p, obj
+          {_md, vals} when is_list(vals) ->
+            opts = :lists.ukeymerge 1, opts, spec[:riak]
+            # Update object to resolve sibling conflicts, update/5
+            # uses :if_not_modified to try to ensure nothing gets out
+            # of hand
+            spawn fn() -> update spec, sel, [], opts, obj end
+            cond do
+              passobj? -> {:ok, vals, obj}
+              true -> {:ok, vals}
+            end
 
-            {:error, :notfound} ->
-              obj = fun.(:riakc_obj.new(bucket, key, "", []))
-              PB.put p, obj
+          type when passobj? ->
+            {:ok, type.value(obj), obj}
 
-            ret ->
-              ret
+          type ->
+            {:ok, type.value obj}
         end
-      end
-    end
 
-    with_pid modfun, opts[:pid], fn
-      (:ok, pid) when return? ->
-        read(domain, sel, spec, [{:pid, pid} | opts])
-
-      (res, pid) ->
-        return res, pid
+      err ->
+        err
     end
   end
 
-  def query(domain, q, spec) do
+  @doc """
+  Delete an item at `sel`
+
+  @todo 2014-01-14; secure rollback on failed deletes
+  """
+  def delete(spec, sel, opts) do
+    {bucket, key} = genkey spec, sel
+
+    delopts = [{:dw, :one} | (opts[:delopts] || []) ++ (spec[:riak][:delopts] || [])]
+    case dofun(:ok, spec, spec[:ondelete], sel) do
+      {:ok, _} -> with_pid &PB.delete &1, bucket, key, delopts
+      :ok -> with_pid &PB.delete &1, bucket, key, delopts
+      err -> err
+    end
+  end
+
+  @doc """
+  Query SOLR for a document
+  """
+  def query(_spec, _q, _opts) do
     {:error, :notimplemented}
     #q = Enum.map q, fn({k,v}) -> "#{k}:#{v}" end
     #case with_pid(&PB.search &1, atom_to_binary(domain), q) do
@@ -111,154 +135,204 @@ defmodule LQRC.Riak do
     #end
   end
 
-  def range(domain, sel, a, b, spec, opts) do
-    {bucket, idx} = genkey domain, sel, spec
+  @doc """
+  Get all items where value of index `List.last(sel)` is between a and b;
+  specify bucket in the elements 0..n-1 in `sel`
+  """
+  def range(spec, sel, a, b, opts) do
+    {bucket, idx} = genkey spec, sel
 
-    idx = maybe_expand_idx(idx, spec)
+    idx = maybe_expand_idx idx, spec
 
-    fun = if opts[:expand] do
-        input = {:index, bucket, idx, a, b}
-        phases = [
-          {:map, {:modfun, :lqrc_mr, :robject}, :get_values, true}]
-
-        &PB.mapred(&1, input, phases)
-      else
-        &PB.get_index_range(&1, bucket, idx, a, b)
-      end
-
-    with_pid fun, opts[:pid], fn
-      ({:ok, [{0, vals}]}, pid) ->
-        return :ok, pid
-        {:ok, __MODULE__.Obj.decode(vals, false)}
-
-      ({:ok, {:index_results_v1, keys, _, _}}, pid) ->
-        return :ok, pid
-        {:ok, keys}
-
-      (res, pid) ->
-        return res, pid
-    end
-  end
-
-  def index(domain, sel, val, spec, opts) do
-    {bucket, idx} = genkey domain, sel, spec
-
-    idx = maybe_expand_idx(idx, spec)
-
-    # to map/reduce or not to map/reduce
-    fun = if opts[:expand] do
-        input = {:index, bucket, idx, val}
-        phases = [
-          {:map, {:modfun, :lqrc_mr, :robject}, :get_values, true}]
-
-        &PB.mapred(&1, input, phases)
-      else
-        &PB.get_index_eq(&1, bucket, idx, val)
-      end
-
-    with_pid fun, opts[:pid], fn
-      ({:ok, [{0, vals}]}, pid) ->
-        return :ok, pid
-        {:ok, __MODULE__.Obj.decode(vals, false)}
-
-      ({:ok, {:index_results_v1, keys, _, _}}, pid) ->
-        return :ok, pid
-        {:ok, keys}
-
-      (res, pid) ->
-        return res, pid
-    end
-  end
-
-  defp maybe_expand_idx(idx, spec) do
-    case (lc {_, ^idx} = i inlist spec[:index] do i end) do
-      []  -> idx
-      [{t, k}|_] ->
-        {:ok, str} = String.to_char_list k
-        {t, str}
-    end
+    with_pid(&PB.get_index_range(&1, bucket, idx, a, b), opts[:pid]) |> indexret
   end
 
   @doc """
-  Create the riak {bucket, key} pair.
-
-  Bucket will, depending on spec[:datatype], be either a tuple {domain, bucket}
-  or binary representation of the same `\#{domain}/\#{bucket}`
-
-  If called without spec domain will not be prefixed
+  Get all items where index `List.last(sel)` == `val`;
+  specify bucket in the elements 0..n-1 in `sel`
   """
-  defp genkey(domain, sel, spec // nil) do
-    case sel do
-      [key] ->
-        {atom_to_binary(domain), key}
+  def tagged(spec, sel, val, opts) do
+    {bucket, idx} = genkey spec, sel
 
-      sel when spec === nil ->
-        {a, [b]} = Enum.split sel, length(sel) - 1
-        {Enum.join(a, "/"), b}
+    idx = maybe_expand_idx idx, spec
 
-      sel ->
-        {a, [b]} = Enum.split sel, length(sel) - 1
-        {Enum.join([atom_to_binary(domain) | a], "/"), b}
+    with_pid(&PB.get_index_eq(&1, bucket, idx, val), opts[:pid]) |> indexret
+  end
+
+  defp indexret({:ok, {:index_results_v1, res, _, _}}), do: {:ok, res}
+  defp indexret(res), do: res
+
+#  defp mapred() do
+#    with_pid fun, opts[:pid], fn
+#      ({:ok, [{0, vals}]}, pid) ->
+#        return :ok, pid
+#        decode vals vals
+#  end
+
+  @doc """
+  Write `vals` to the selected object, if `object` equals nil a new
+  riak object will be created
+
+  Before writing, indexes will be appended to the document and `vals`
+  will be encoded with content type defined in `spec`.
+  """
+  def write_obj(vals, spec, sel, nil, opts) do
+    {bucket, key} = genkey spec, sel
+
+    obj = RObj.new bucket, key, [], spec[:content_type]
+    write_obj vals, spec, sel, obj, opts
+  end
+  def write_obj(vals, spec, sel, obj, opts) do
+    matchedvals = case spec[:schema] do
+      [_|_] = schema->
+        LQRC.Schema.match schema, vals
+
+      _ ->
+        {:ok, vals}
+    end
+
+    case matchedvals do
+      {:ok, vals} ->
+        type = spec[:content_type] || "octet/stream"
+        obj = RObj.update_value(
+          update_obj_indexes(spec, RObj.update_content_type(obj, type), vals),
+          ContentType.encode(vals, type))
+
+        opts = :lists.ukeymerge 1, opts, spec[:riak]
+
+        case spec[:datatype] do
+          nil -> with_pid &PB.put(&1, obj, opts[:putopts]), opts[:pid]
+          type ->
+            {bucket, key} = genkey spec, sel
+            with_pid &PB.update_type(&1, bucket, key, type.to_op(vals), opts[:putopts]), opts[:pid]
+        end
+
+      {:error, _} = err -> err
     end
   end
 
-  defmodule Obj do
-    @moduledoc """
-    Bindings for future riakc_obj updates
+  def read_obj(spec, sel, opts) do
+    {bucket, key} = genkey spec, sel
 
-    All functions in this module are sideeffect free and caller must
-    save the data using the appropriate function in :riakc_pb_socket API.
-    """
+    getopts = (opts[:getopts] || []) ++ (spec[:riak][:getopts] || [])
+    if ! spec[:datatype] do
+      with_pid &PB.get(&1, bucket, key, getopts), opts[:pid]
+    else
+      with_pid &PB.fetch_type(&1, bucket, key)
+    end
+  end
 
-    @doc """
-    Closure for updating riak objects
-    """
-   def update(vals, spec) do
-      fn(obj) ->
-        vals = cond do
-          spec[:merge_updates] -> ukeymergerec(vals, decode(obj))
-                          true -> vals
-        end
+  defp decode(obj, _) when elem(obj, 0) == :riakc_obj do
+    {_, val} = decode_md(obj)
+    {:ok, val, obj}
+  end
+  defp decode(obj, spec), do:
+    {:ok, spec[:datatype].value(obj), obj}
 
-        # Add indexes if they exist
-        IO.inspect {:spec, spec}
-        md = case spec[:index] do
-          [_|_] = indexes ->
-            md = :riakc_obj.get_update_metadata obj
-            md = Enum.reduce indexes, md, fn({t, k} = idx, acc) ->
-                IO.inspect {:idx, idx, vals[k]}
-                case vals[k] do
-                  [_|_] = vals -> :riakc_obj.add_secondary_index(acc, {idx, vals})
-                  nil -> raise "no such index: #{spec[:domain]}:#{idx}"
-                  val -> :riakc_obj.add_secondary_index(acc, {idx, [val]})
-                end
-            end
-            obj = :riakc_obj.update_metadata obj, md
+  defp decode_md(obj) do
+    case RObj.value_count(obj) do
+      1 ->
+        vals = RObj.get_update_value obj
+        {nil,
+         ContentType.decode(vals, RObj.get_update_content_type(obj))}
 
-          _ ->
-            obj
-        end
+      _ ->
+        [{md,val}| contents] = RObj.get_contents obj
+        acc = {md, ContentType.decode(val, RObj.md_ctype(md))}
+        Enum.reduce contents, acc, fn({md, val}, {oldmd, acc}) ->
+            t       = :dict.fetch("X-Riak-Last-Modified", oldmd)
+            lastmod = :dict.fetch("X-Riak-Last-Modified", md)
 
-        :riakc_obj.update_value(obj, term_to_binary(vals))
+            val = ContentType.decode(val, RObj.md_ctype(md))
+            {oldmd, ukeymergerec(val, acc)}
+          end
+    end
+
+  end
+
+  defp set_key(_dt, nil, _sel, vals), do: vals
+  defp set_key(nil, key, sel, vals), do:
+    List.keystore(vals, key, 0, {key, List.last(sel)})
+  defp set_key(_, _key,_sel, vals), do: vals
+
+  # Generate the riak {bucket, key} pair from `sel`
+  defp genkey(spec, sel) do
+    domain = atom_to_binary spec[:domain]
+
+    {bucket, key} = case sel do
+      [key] ->
+        {domain, key}
+
+      sel ->
+        {a, [b]} = Enum.split sel, length(sel) - 1
+        {Enum.join([domain | a], "/"), b}
+    end
+
+    case spec[:bucket_type] do
+      nil  -> {bucket, key}
+      type -> {{type, bucket}, key}
+    end
+  end
+
+  defp dofun_rollback({:ok, acc, _obj}, spec, funs, sel, prepend, fun), do:
+    dofun({:ok, acc}, spec, funs, sel, prepend, [fn() -> fun.() end])
+  defp dofun_rollback(res, spec, funs, sel, prepend, _), do:
+    dofun(res, spec, funs, sel, prepend, [])
+
+  defp dofun(res, spec, funs, sel), do:
+    dofun(res, spec, funs, sel, [])
+  defp dofun(res, spec, funs, sel, prepend), do:
+    dofun(res, spec, funs, sel, prepend, [])
+
+  defp dofun(:ok = acc, spec, [{m, f, a}|rest], sel, prepend, rb) do
+    apply(m, f, [spec, sel, acc | prepend ++ a]) |>
+      dofun(spec, rest, sel, prepend, rb)
+  end
+  defp dofun({:ok, acc}, spec, [{m, f, a}|rest], sel, prepend, rb) do
+    apply(m, f, [spec, sel, acc | prepend ++ a]) |>
+      dofun(spec, rest, sel, prepend, rb)
+  end
+  defp dofun({:ok, acc, rbfun}, spec, [{m, f, a}|rest], sel, prepend, rb) do
+    apply(m, f, [spec, sel, acc | prepend ++ a]) |>
+      dofun(spec, rest, sel, prepend, [rbfun | rb])
+  end
+
+  defp dofun({:error, _} = err, spec, _, sel, _prepend, rollback) do
+    {domain, k} = {spec["domain"], Enum.join(sel, "/")}
+    length(rollback) > 0 and
+      :error_logger.error_msg "#{domain} transaction failed for '#{k}'",
+                              [Kernel.inspect(err)]
+
+    lc f inlist rollback do
+      case f.() do
+        :ok -> :ok
+        {:ok, _} -> :ok
+        err ->
+          :error_logger.error_msg "#{domain} transaction failed for '#{k}'",
+                                  [Kernel.inspect(err)]
       end
     end
 
-    @doc """
-    Recursively merge the unsorted lists A and B, picking the last
-    value from list A if there are any duplicates.
-    """
-    def ukeymergerec([], b), do: b
-    def ukeymergerec([{k, v} | rest], b) do
-      set? = is_list(v) && length(v) > 0 && is_binary(hd(v))
+    err
+  end
+
+  defp dofun(final, _spec, _funs, _sel, _prepend, _rb) do final end
+
+  # Recursively merge the unsorted lists A and B, picking the last
+  # value from list A if there are any duplicates.
+  defp ukeymergerec(a, []), do: a
+  defp ukeymergerec([], b), do: b
+  defp ukeymergerec([{k, v} | rest], b) do
+    set? = is_list(v) && length(v) > 0 && is_binary(hd(v))
+    if nil === v do
+      ukeymergerec(rest, List.keydelete(b, k, 0))
+    else
       v = case b[k] do
-        oldval when !set? and is_list(v) ->
-          ukeymergerec(v, oldval || [])
-
         oldval when set? and is_list(v) and is_list(oldval) ->
-          :lists.usort(v ++ oldval)
+          :lists.umerge(v, oldval)
 
-        oldval when set? and is_list(v) ->
-          :lists.usort(v)
+        oldval when is_list(v) and is_list(oldval) ->
+          ukeymergerec v, oldval
 
         _ ->
           v
@@ -266,180 +340,48 @@ defmodule LQRC.Riak do
 
       List.keysort ukeymergerec(rest, List.keystore(b, k, 0, {k, v})), 0
     end
-    @doc """
-    Remove a item from proplist
+  end
 
-    If called on flag, register or counter this has same effect as
-    update
-    """
-    def reduce(vals, spec) do
-      nil
-    end
-
-    @doc """
-    Decodes a binary encoded proplist from riakc_obj
-
-    If the object have siblings these will be recursively merged
-    """
-    def decode(obj, robject // true) do
-      val = if robject do
-          :riakc_obj.get_contents(obj)
-        else
-          obj
-        end
-      case val do
-        [] ->
-          []
-
-        [{_,_}|_] = siblings ->
-          siblings = lc {_md, v} inlist siblings do v end
-          Enum.reduce siblings, [], fn(o, acc) ->
-            ukeymergerec(binary_to_term(o), acc)
-          end
-
-        [_|_] = siblings ->
-          Enum.reduce siblings, [], fn(o, acc) ->
-            ukeymergerec(binary_to_term(o), acc)
-          end
-      end
+  defp maybe_expand_idx(idx, spec) do
+    case List.keyfind spec[:index], idx, 1 do
+      nil  -> idx
+      {t, k} when is_list(k) ->
+        {:ok, str} = String.to_char_list Enum.join(k, "/")
+        {t, str}
+      {t, k} ->
+        {:ok, str} = String.to_char_list k
+        {t, str}
     end
   end
 
-  defmodule CRDT do
-    @moduledoc """
-    Bindings for future update of CRDT objects
+  defp update_obj_indexes(spec, obj, vals) do
+    case spec[:index] do
+      [] ->
+        obj
 
-    All functions in this module are sideeffect free and caller must
-    save the data using the appropriate function in :riakc_pb_socket API.
-    """
-
-    @doc """
-    Returns closure for updating a CRDT
-    """
-    def update(vals, spec) do
-      case spec[:datatype] do
-        :map ->      &update_map(vals,      &1)
-        :set ->      &update_set(vals,      &1)
-        :flag ->     &update_flag(vals,     &1)
-        :register -> &update_register(vals, &1)
-        :counter ->  &update_counter(vals,  &1)
-      end
+      [_|_] = indexes ->
+        RObj.update_metadata obj,
+          update_md_indexes(RObj.get_update_metadata(obj), vals, indexes)
     end
-
-    @doc """
-    Returns closure to remove item from set or map CRDT
-
-    If called on flag, register or counter this has same effect as
-    update
-    """
-    def reduce(vals, spec) do
-      case spec[:datatype] do
-        :map ->      &reduce_map(vals,      &1)
-        :set ->      &reduce_set(vals,      &1)
-        :flag ->     &update_flag(vals,     &1)
-        :register -> &update_register(vals, &1)
-        :counter ->  &update_counter(vals,  &1)
-      end
-    end
-
-    @doc """
-    Decodes a CRDT into a nested-proplist
-    """
-    def decode(crdt) do
-      case :riakc_datatype.module_for_term crdt do
-        :undefined  ->
-          {:error, {:unknown_crdt, crdt}}
-
-        mod ->
-          {:ok, mapper(mod, crdt)}
-      end
-    end
-
-
-    defp reduce_set(vals, set) when is_list(vals), do:
-      Enum.reduce(vals, set, &reduce_set/2)
-    defp reduce_set(val, set), do:
-      :riakc_set.del_element(val, set)
-
-    defp update_set(vals, set) when is_list(vals), do:
-      Enum.reduce(vals, set, &update_set/2)
-    defp update_set(val, set), do:
-      :riakc_set.add_element(val, set)
-
-    defp update_flag(true,  flag),   do: :riakc_flag.enable flag
-    defp update_flag(false, flag),   do: :riakc_flag.disable flag
-
-    defp update_register(v, reg),    do: :riakc_register.set(v, reg)
-
-    defp update_counter(n, counter), do: :riakc_counter.increment(n, counter)
-
-    @doc """
-    Updates a map datastructure with given proplist
-    """
-    defp update_map(vals, map) when is_list(vals), do:
-        Enum.reduce(vals, map, &update_map/2)
-
-    defp update_map({k, v}, acc) when is_integer(v), do:
-      :riakc_map.update({k, :counter}, fn(counter) ->
-        :riakc_counter.increment v, counter end, acc)
-
-    defp update_map({k, v}, acc) when is_binary(v), do:
-      :riakc_map.update({k, :register}, fn(reg) -> :riakc_register.set v, reg end, acc)
-
-    defp update_map({k, v}, acc) when is_float(v) do
-      v = iolist_to_binary(:io_lib.format("~g", [v]))
-      :riakc_map.update({k, :register}, fn(reg) -> :riakc_register.set v, reg end, acc)
-    end
-
-    defp update_map({k, true}, acc), do:
-      :riakc_map.update({k, :flag}, fn(flag) -> :riakc_flag.enable flag end, acc)
-
-    defp update_map({k, false}, acc), do:
-      :riakc_map.update({k, :flag}, fn(flag) -> :riakc_flag.disable flag end, acc)
-
-    defp update_map({k, [{_,_} | _] = v}, acc), do:
-      :riakc_map.update({k, :map}, fn(map) -> update_map(v, map) end, acc)
-
-    defp update_map({k, [_h | _] = v}, acc), do:
-      :riakc_map.update({k, :set}, fn(set) ->
-        Enum.reduce v, set, fn(v0, a0) ->
-          :riakc_set.add_element v0, a0
-        end
-      end, acc)
-
-    defp reduce_map(vals, map) when is_list(vals), do:
-        Enum.reduce(vals, map, &reduce_map/2)
-
-    defp reduce_map({k, [{_,_} | _] = v}, acc) do
-      :riakc_map.update({k, :map}, fn(map) -> reduce_map(v, map) end, acc)
-    end
-
-    defp reduce_map({k, [_h | _] = v}, acc) do
-      :riakc_map.update({k, :set}, fn(set) ->
-        Enum.reduce v, set, fn(v0, a0) ->
-          :riakc_set.del_element v0, a0
-        end
-      end, acc) end
-
-    defp reduce_map({k, _}, acc) do
-      :riakc_map.erase(k, acc)
-    end
-
-    defp mapper_red({{k, _}, v}) when is_list(v), do:
-      {k, lc v0 inlist v do mapper_red(v0) end}
-    defp mapper_red({{k, _}, v}), do:
-      {k, v}
-    defp mapper_red(v), do:
-      v
-
-    defp mapper(:riakc_map = m, crdt), do:
-      m.fold(fn(k, v, acc) ->
-        [mapper_red({k, v}) | acc]
-      end, [], crdt)
-    defp mapper(:riakc_set = m, crdt), do:
-      :ordset.to_list m.value(crdt)
-    defp mapper(mod, crdt), do:
-      mod.value crdt
   end
 
+  defp update_md_indexes(md, _vals, []), do: md
+  defp update_md_indexes(md, vals, [idx|rest]), do:
+    update_md_indexes(add_md_index(md, idx, vals), vals, rest)
+
+  defp add_md_index(md, {idxtype, k}, vals) when is_list(k) do
+    val = Enum.reduce k, "", fn(k, acc) -> Enum.join([acc, vals[k]], "/") end
+    add_md_index2 md, {idxtype, Enum.join(k, "/")}, val
+  end
+  defp add_md_index(md, {_, k} = idx, vals), do:
+    add_md_index2(md, idx, vals[k])
+
+  defp add_md_index2(md, _idx, nil), do: md
+  defp add_md_index2(md, idx, [_|_] = val), do:
+    RObj.set_secondary_index(md, {idx, Enum.map(val, &map_hash_idx/1)})
+  defp add_md_index2(md, idx, val), do:
+    RObj.set_secondary_index(md, {idx, Enum.map([val], &map_hash_idx/1)})
+
+  defp map_hash_idx({_, idx}), do: idx
+  defp map_hash_idx(idx),      do: idx
 end

@@ -74,9 +74,7 @@ defmodule LQRC.Collection do
     end
   end
 
-  @doc """
-  Reduce each side of collection until range is met
-  """
+  # Reduce each side of collection until range is met
   def keyslice({:range, a, b}, vals, opts), do: 
     keyslice({:range, a, b}, vals, opts, :left)
 
@@ -93,12 +91,10 @@ defmodule LQRC.Collection do
     {:ok, Enum.reverse(vals)}
 
 
-  @doc """
-  Reduces the collection to keys matching prefix
+  # Reduces the collection to keys matching prefix
 
-  The algorithm is simple, reduce from left side until match is made
-  then reduce from right side.
-  """
+  # The algorithm is simple, reduce from left side until match is made
+  # then reduce from right side.
   def keyslice({:prefix, p}, vals, opts) do
     ps = size(p)
     fun = fn
