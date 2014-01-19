@@ -4,8 +4,8 @@ defmodule LQRC do
 
   @backend LQRC.Riak
 
-  def write(domain, sel, vals, opts // []) do
-    call(domain, :write, [sel, vals, opts])
+  def write(domain, sel, vals, opts // [], obj // nil) do
+    call(domain, :write, [sel, vals, opts, obj])
   end
 
   def update(domain, sel, vals, opts // [], obj // nil), do:
