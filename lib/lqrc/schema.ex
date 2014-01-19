@@ -131,8 +131,12 @@ defmodule LQRC.Schema do
   defp parse(:int, _props, k, _val), do:
     {:error, "value of '#{k}' is not a integer"}
 
-  defp parse(:'list/hash', _props, _k, []), do:
-    :ok
+  defp parse(:'list/hash', props, _k, []) do
+    case props[:deep] do
+      false -> :continue
+      _ -> :ok
+    end
+  end
   defp parse(:'list/hash' = t, props, k, [{_,_}|rest]), do:
     parse(t, props, k, rest)
   defp parse(:'list/hash', _props, _k, [e|_]), do:
