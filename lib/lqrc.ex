@@ -1,4 +1,10 @@
 defmodule LQRC do
+  use Application.Behaviour
+
+  def start(:normal, []) do
+    :domains = :ets.new(:domains, [:set, :named_table, :public])
+    {:ok, self}
+  end
 
   require LQRC.Domain, as: Domain
 

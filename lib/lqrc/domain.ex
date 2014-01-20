@@ -36,7 +36,18 @@ defmodule LQRC.Domain do
   Read given domain and returns proplist with information
   """
   def read(domain) when is_atom(domain) do
-    LQRC.read lqrc, ["domains", atom_to_binary domain]
+    case :ets.lookup :domains, domain do
+      [{^domain, spec}] -> {:ok, spec}
+      [] ->
+        case LQRC.read lqrc, ["domains", atom_to_binary domain] do
+          {:ok, spec} = res ->
+            true = :ets.insert :domains, {domain, spec}
+            res
+
+          {:error, _} = err ->
+            err
+        end
+    end
   end
   def read!(domain) when is_atom(domain) do
     case read(domain) do
