@@ -298,9 +298,9 @@ defmodule LQRC.Riak do
   end
 
   defp dofun({:error, _} = err, spec, _, sel, _prepend, rollback) do
-    {domain, k} = {spec["domain"], Enum.join(sel, "/")}
+    {domain, k} = {spec[:domain], Enum.join(sel, "/")}
     length(rollback) > 0 and
-      :error_logger.error_msg "#{domain} transaction failed for '#{k}'",
+      :error_logger.error_msg "transaction failed for #{domain} '#{k}'",
                               [Kernel.inspect(err)]
 
     lc f inlist rollback do
@@ -308,7 +308,7 @@ defmodule LQRC.Riak do
         :ok -> :ok
         {:ok, _} -> :ok
         err ->
-          :error_logger.error_msg "#{domain} transaction failed for '#{k}'",
+          :error_logger.error_msg "rollback failed for #{domain} '#{k}'",
                                   [Kernel.inspect(err)]
       end
     end
