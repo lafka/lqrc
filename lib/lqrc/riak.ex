@@ -250,13 +250,12 @@ defmodule LQRC.Riak do
 
   end
 
-  defp set_key(_dt, nil, _sel, vals), do: vals
-  defp set_key(nil, key, sel, vals), do:
-    List.keystore(vals, key, 0, {key, List.last(sel)})
-  defp set_key(_, _key,_sel, vals), do: vals
-
-  # Generate the riak {bucket, key} pair from `sel`
-  defp genkey(spec, sel) do
+  @doc """
+  Generate the riak {bucket, key} pair from `sel`
+  """
+  def genkey(spec, sel) when is_atom(spec), do:
+    genkey(LQRC.Domain.read!(spec), sel)
+  def genkey(spec, sel) do
     domain = atom_to_binary spec[:domain]
 
     {bucket, key} = case sel do
@@ -273,6 +272,11 @@ defmodule LQRC.Riak do
       type -> {{type, bucket}, key}
     end
   end
+  defp set_key(_dt, nil, _sel, vals), do: vals
+  defp set_key(nil, key, sel, vals), do:
+    List.keystore(vals, key, 0, {key, List.last(sel)})
+  defp set_key(_, _key,_sel, vals), do: vals
+
 
   defp dofun_rollback({:ok, acc, _obj}, spec, funs, sel, prepend, fun), do:
     dofun({:ok, acc}, spec, funs, sel, prepend, [fn() -> fun.() end])
@@ -320,9 +324,9 @@ defmodule LQRC.Riak do
 
   # Recursively merge the unsorted lists A and B, picking the last
   # value from list A if there are any duplicates.
-  defp ukeymergerec(a, []), do: a
-  defp ukeymergerec([], b), do: b
-  defp ukeymergerec([{k, v} | rest], b) do
+  def ukeymergerec(a, []), do: a
+  def ukeymergerec([], b), do: b
+  def ukeymergerec([{k, v} | rest], b) do
     set? = is_list(v) && length(v) > 0 && is_binary(hd(v))
     if nil === v do
       ukeymergerec(rest, List.keydelete(b, k, 0))
@@ -342,7 +346,9 @@ defmodule LQRC.Riak do
     end
   end
 
-  defp maybe_expand_idx(idx, spec) do
+  def maybe_expand_idx(idx, spec) when is_atom(spec), do:
+    maybe_expand_idx(idx, LQRC.Domain.read!(spec))
+  def maybe_expand_idx(idx, spec) do
     case List.keyfind spec[:index], idx, 1 do
       nil  -> idx
       {t, k} when is_list(k) ->
