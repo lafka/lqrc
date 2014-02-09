@@ -157,6 +157,7 @@ defmodule LqrcTest do
       {"default",            [type: :str, default: "val"]},
       {"nested.default.val", [type: :str, default: "myval"]},
       {"str.id",    [type: :id]},
+      {"str.resource", [type: :resource]},
       {"str.regex", [type: :regex, regex: %r/^[a-zA-Z0-9]+$/]},
       {"str.enum",  [type: :enum, match: ["a", "b", "c"]]},
       {"int.max",       [type: :int, max: 100]},
@@ -167,6 +168,7 @@ defmodule LqrcTest do
       {"int.range_neg", [type: :int, min: -100, max: -10]},
       {"list.hash.*", [type: :str]},
       {"list.id",   [type: :'list/id']},
+      {"list.resource", [type: :'list/resource']},
     ]]
 
     defopts = [putopts: [:return_body]]
@@ -179,6 +181,11 @@ defmodule LqrcTest do
       {"str", [{"id", "abc"}]}]
     assert {:error, [[{"key", "str.id"},_]]} = LQRC.write :schema, ["str.id"], [
       {"str", [{"id", "!@#$%^&*"}]}]
+
+    assert :ok = LQRC.write :schema, ["str.resource"], [
+      {"str", [{"resource", "abc/def"}]}]
+    assert {:error, [[{"key", "str.resource"},_]]} = LQRC.write :schema, ["str.resource"], [
+      {"str", [{"resource", "!@#$%^&*"}]}]
 
     assert :ok = LQRC.write :schema, ["str.regex"], [
       {"str", [{"regex", "azAZ09"}]}]
@@ -232,5 +239,12 @@ defmodule LqrcTest do
       {"list", [{"id", ["a", "b"]}]}]
     assert {:error, [[{"key", "list.id"},_]]} = LQRC.write :schema, ["list/id"], [
       {"list", [{"id", ["a", 1]}]}]
+
+    assert :ok = LQRC.write :schema, ["list/resource"], [
+      {"list", [{"resource", []}]}]
+    assert :ok = LQRC.write :schema, ["list/resource"], [
+      {"list", [{"resource", ["a/b", "c/d", "e"]}]}]
+    assert {:error, [[{"key", "list.resource"},_]]} = LQRC.write :schema, ["list/resource"], [
+      {"list", [{"resource", ["a/b", 1]}]}]
   end
 end

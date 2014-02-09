@@ -6,6 +6,8 @@ ExUnit.start
 
 Code.ensure_loaded LQRC.Riak
 
+LQRC.start :normal, []
+
 
 defmodule RH do
   def reset do
