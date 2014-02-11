@@ -94,7 +94,7 @@ defmodule LQRC.Schema do
   end
 
   defp parse(:resource, _props, k, <<id :: binary>>) do
-    case Regex.match? %r/^[a-zA-Z0-9-\/@]+$/, id do
+    case Regex.match? %r/^[a-zA-Z0-9-\/@.]+$/, id do
       true  -> :ok
       false -> {:error, "value of '#{k}' not a valid resource"}
     end
@@ -165,7 +165,7 @@ defmodule LQRC.Schema do
   defp parse(:'list/resource', _props, _k, []), do:
     :continue
   defp parse(:'list/resource' = t, props, k, [<<e :: binary>>|rest]) do
-    case Regex.match? %r/^[a-zA-Z0-9-\/@]+$/, e do
+    case Regex.match? %r/^[a-zA-Z0-9-\/@.]+$/, e do
         true -> parse(t, props, k, rest)
         false -> {:error, "element '#{e}' not a valid resource"}
     end
