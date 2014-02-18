@@ -328,7 +328,7 @@ defmodule LQRC.Riak do
   def ukeymergerec([], b), do: b
   def ukeymergerec([{k, v} | rest], b) do
     set? = is_list(v) && length(v) > 0 && (not is_tuple(hd(v)))
-    if nil === v do
+    if nil === v or :undefined === v do
       ukeymergerec(rest, List.keydelete(b, k, 0))
     else
       v = case b[k] do
