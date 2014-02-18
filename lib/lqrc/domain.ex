@@ -66,6 +66,7 @@ defmodule LQRC.Domain do
 
     case Enum.reduce match, Keyword.keys(props), fn(a, b) -> b -- [a] end do
       [] ->
+        :ets.delete :domains, domain
         LQRC.write lqrc, ["domains", atom_to_binary domain], props
 
       errs ->
