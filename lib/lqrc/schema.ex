@@ -117,7 +117,7 @@ defmodule LQRC.Schema do
     end
   end
 
-  defp parse(:enum, props, _k, <<val :: binary>>) do
+  defp parse(:enum, props, _k, val) do
     case Enum.member? props[:match], val do
       true  -> :ok
       false ->
