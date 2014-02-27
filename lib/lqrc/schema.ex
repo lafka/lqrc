@@ -15,7 +15,7 @@ defmodule LQRC.Schema do
   Undefined parent elements of nested keys will have be implicitly
   typed as list/hash values.
   """
-  def match(schema, vals),         do: match(schema, vals, "")
+  def match(schema, vals),         do: match(schema, vals, [])
   def match(schema, vals, prefix) do
     vals = Enum.reduce schema, vals, fn({k, props}, acc) ->
       cond do
@@ -60,8 +60,13 @@ defmodule LQRC.Schema do
     match(schema, rest, prefix, [expanderr(k, err) | errs], acc)
   end
 
-  def mkey(key, ""), do: key
-  def mkey(key, prefix), do: prefix <> "." <> key
+  def mkey(key, prefix), do: mkey(key, prefix, false)
+  def mkey(key, prefix, wildcard?), do: mkey2(key, prefix, wildcard?)
+
+  defp mkey2(key, [], _), do: [key]
+  defp mkey2(key, [_|prefix], true), do: [key, "*" | prefix]
+  defp mkey2(key, prefix, false), do: [key | prefix]
+  defp flattenkey(k), do: Enum.join(Enum.reverse(k), ".")
 
   defp fill_tree(acc, [], _v), do: acc
   defp fill_tree(acc, [k], v) do
@@ -74,9 +79,14 @@ defmodule LQRC.Schema do
     List.keystore(acc, k, 0, {k, fill_tree((acc[k] || []), rest, v)})
 
   defp pickkey(schema, k, prefix, nested?) do
+
+    k0 = flattenkey(mkey(k, prefix))
+    k1 = flattenkey(mkey(k, prefix, true))
+    k2 = flattenkey(mkey("*", prefix, false))
     cond do
-      nil !== schema[k = mkey(k, prefix)   ] -> {:ok, k}
-      nil !== schema[k2 = mkey("*", prefix)] -> {:ok, k2}
+      nil !== schema[k0] -> {:ok, k0}
+      nil !== schema[k1] -> {:ok, k1}
+      nil !== schema[k2] -> {:ok, k2}
       nested? -> {:ok, "_"}
       true ->
         newk = mkey(k, prefix)
@@ -174,10 +184,10 @@ defmodule LQRC.Schema do
     {:error, "element '#{e}' not a valid resource"}
 
   defp parse(type, _props, k, _val), do:
-    {:error, "error", "invalid type '#{type}' for '#{k}'"}
+    {:error, "invalid type '#{type}' for '#{k}'"}
 
   defp expandbool(:true, _), do: :ok
   defp expandbool(:false, err), do: err
 
-  defp expanderr(k, err), do: [{"key", k}, {"error", err}]
+  defp expanderr(k, err), do: [{"key", flattenkey(k)}, {"error", err}]
 end

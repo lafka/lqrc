@@ -247,4 +247,17 @@ defmodule LqrcTest do
     assert {:error, [[{"key", "list.resource"},_]]} = LQRC.write :schema, ["list/resource"], [
       {"list", [{"resource", ["a/b", 1]}]}]
   end
+
+  test "schema wildcard parent" do
+    :ok = LQRC.Domain.write :wildcardschema, [key: nil, schema: [
+      {"list", [type: :'list/hash']},
+      {"list.*.wildcard", [type: :'list/resource']}
+    ]]
+
+    defopts = [putopts: [:return_body]]
+    match = [{"list", [{"a", [{"wildcard", ["x", "y", "z"]}]}]}]
+    assert {:ok, match} == LQRC.write :wildcardschema, ["nested_wildcard"], match, defopts
+    assert {:error, [[{"key", "list.a.wildcard"},_]]} = LQRC.write :wildcardschema, ["nested_wildcard"], [
+      {"list", [{"a", [{"wildcard", "x"}]}]}]
+  end
 end
