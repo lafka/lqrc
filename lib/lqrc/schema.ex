@@ -52,6 +52,9 @@ defmodule LQRC.Schema do
       :continue ->
         match schema, rest, prefix, errs, List.keystore(acc, rk, 0, {rk, v})
 
+      :ignore ->
+        match schema, rest, prefix, errs, acc
+
       {:error, err} ->
         match schema, rest, prefix, [expanderr(mkey(rk, prefix), err) | errs], acc
       end
@@ -182,6 +185,8 @@ defmodule LQRC.Schema do
   end
   defp parse(:'list/resource', _props, _k, [e|_]), do:
     {:error, "element '#{e}' not a valid resource"}
+
+  defp parse(:ignore, _props, _k, _), do: :ignore
 
   defp parse(type, _props, k, _val), do:
     {:error, "invalid type '#{type}' for '#{k}'"}

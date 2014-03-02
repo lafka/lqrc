@@ -260,4 +260,16 @@ defmodule LqrcTest do
     assert {:error, [[{"key", "list.a.wildcard"},_]]} = LQRC.write :wildcardschema, ["nested_wildcard"], [
       {"list", [{"a", [{"wildcard", "x"}]}]}]
   end
+
+  test "schema :ignore type (ro-keys)" do
+    :ok = LQRC.Domain.write :ignoretype, [key: nil, schema: [
+      {"key", [type: :str]},
+      {"meta", [type: :ignore]},
+    ]]
+
+    assert {:ok, [{"key", "val"}]} == LQRC.write :ignoretype, ["k"], [
+      {"key", "val"},
+      {"meta", 1234567890}
+    ], [putopts: [:return_body]]
+  end
 end
