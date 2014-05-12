@@ -4,11 +4,6 @@
 
 ExUnit.start
 
-Code.ensure_loaded LQRC.Riak
-
-LQRC.start :normal, []
-
-
 defmodule RH do
   def reset do
     {:ok, backend} = :rpc.call testnode, :application, :get_env, [:riak_kv, :storage_backend]

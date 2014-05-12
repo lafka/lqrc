@@ -10,6 +10,7 @@ defmodule LRQC.Mixfile do
 
   def application do
     [ applications: [ :pooler, :riakc ],
+      mod: { LQRC, [] },
       env: []
     ]
   end

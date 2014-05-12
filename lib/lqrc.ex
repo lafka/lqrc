@@ -2,6 +2,7 @@ defmodule LQRC do
   use Application.Behaviour
 
   def start(:normal, []) do
+    Code.ensure_loaded LQRC.Riak
     :domains = :ets.new(:domains, [:set, :named_table, :public])
     {:ok, self}
   end
