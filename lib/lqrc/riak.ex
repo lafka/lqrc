@@ -22,7 +22,7 @@ defmodule LQRC.Riak do
 
   @todo 2014-01-14; add support for rolling back partial fails
   """
-  def write(spec, sel, vals, opts, obj // nil, oldvals // nil) do
+  def write(spec, sel, vals, opts, obj \\ nil, oldvals \\ nil) do
     putopts = (opts[:putopts] || []) ++ (spec[:riak][:putopts] || [])
     opts = List.keystore opts, :putopts, 0, {:putopts, putopts}
 

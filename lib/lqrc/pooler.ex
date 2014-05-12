@@ -6,7 +6,7 @@ defmodule LQRC.Pooler do
   defmacro __using__(opts) do
     group = opts[:group]
     quote do
-      def with_pid(fun, pid // nil, retfun // &return/2) do
+      def with_pid(fun, pid \\ nil, retfun \\ &return/2) do
         case pid || :pooler.take_group_member(unquote(group)) do
           p when is_pid(p) ->
             fun.(p) |> retfun.(p)

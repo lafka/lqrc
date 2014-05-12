@@ -11,26 +11,26 @@ defmodule LQRC do
 
   @backend LQRC.Riak
 
-  def write(domain, sel, vals, opts // [], obj // nil) do
+  def write(domain, sel, vals, opts \\ [], obj \\ nil) do
     call(domain, :write, [sel, vals, opts, obj])
   end
 
-  def update(domain, sel, vals, opts // [], obj // nil), do:
+  def update(domain, sel, vals, opts \\ [], obj \\ nil), do:
     call(domain, :update, [sel, vals, opts, obj])
 
-  def read(domain, sel, opts // []), do:
+  def read(domain, sel, opts \\ []), do:
     call(domain, :read, [sel, opts])
 
-  def delete(domain, sel, opts // []), do:
+  def delete(domain, sel, opts \\ []), do:
     call(domain, :delete, [sel, opts])
 
-  def range(domain, sel, a, b, opts // []), do:
+  def range(domain, sel, a, b, opts \\ []), do:
     call(domain, :range, [sel, a, b, opts])
 
-  def tagged(domain, sel, val, opts // []), do:
+  def tagged(domain, sel, val, opts \\ []), do:
     call(domain, :tagged, [sel, val, opts])
 
-  def query(domain, q, opts // []), do:
+  def query(domain, q, opts \\ []), do:
     call(domain, :query, [q, opts])
 
   defp call(domain, fun, args) when is_atom(domain) do
