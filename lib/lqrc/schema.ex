@@ -15,184 +15,276 @@ defmodule LQRC.Schema do
   Undefined parent elements of nested keys will have be implicitly
   typed as list/hash values.
   """
-  def match(schema, vals),         do: match(schema, vals, [])
+  def match(schema, vals), do: match(schema, vals, [])
   def match(schema, vals, prefix) do
-    vals = Enum.reduce schema, vals, fn({k, props}, acc) ->
-      cond do
-        nil === props[:default] -> acc
-        true -> fill_tree acc, String.split(k, "."), props[:default]
+    defaultvals = Enum.reduce(schema, [], fn({k,v}, acc) ->
+      case v[:default] do
+        nil -> acc
+        val ->
+          merge(Enum.reverse(String.split(k, ".")) |> Enum.reduce(val, fn(nk, acc0) ->
+            [{nk, acc0}]
+          end), acc)
       end
+    end)
+
+    match(schema, merge(defaultvals, vals), Dict.keys(vals), prefix, [:ok, nil])
+  end
+  def match(schema, vals, [k|rest], prefix, [:ok, _prevk]) do
+    sk = schemakeys(schema, prefix, k)
+
+    match(schema, vals, rest, prefix,
+      validate(vals[k], [k|prefix], sk, schema, vals))
+  end
+  def match(schema, vals, [k|rest], prefix, [{:ok, val}, prevk]) do
+    vals = Dict.put vals, key(prevk, prefix), val
+    sk = schemakeys(schema, prefix, k)
+
+    match(schema, vals, rest, prefix,
+      validate(vals[k], [k|prefix], sk, schema, vals))
+  end
+  def match(schema, vals, [k|rest], prefix, [:skip, prevk]) do
+    vals = Dict.delete vals, key(prevk, prefix)
+    sk = schemakeys(schema, prefix, k)
+
+    match(schema, vals, rest, prefix,
+      validate(vals[k], [k|prefix], sk, schema, vals))
+  end
+  def match(_schema, vals, [], prefix, [:ok, _prevk]), do: {:ok, vals}
+  def match(_schema, vals, [], prefix, [{:ok, val}, prevk]), do:
+    {:ok, Dict.put(vals, key(prevk, prefix), val)}
+  def match(_schema, vals, [], prefix, [:skip, prevk]), do:
+    {:ok, Dict.delete(vals, key(prevk, prefix))}
+  def match(_schema, _vals, _keys, prefix, [{:error, err}, prevk]), do:
+    {:error, [{key(prevk, prefix), err}]}
+
+  def schemakeys(schema, prefix, k) do
+    Enum.map [k, "*", key(k, "*")], &key(&1, prefix)
+  end
+
+  def key(k, prefix), do: Enum.join(Enum.reverse([k, prefix]), ".")
+
+  defp merge(a, [{kb,vb}|restB]) do
+    case Dict.fetch a, kb do
+      {:ok, [{_,_}|_] = va} ->
+        merge Dict.put(a, kb, merge(va, vb)), restB
+      x ->
+        merge Dict.put(a, kb, vb), restB
     end
-
-    match([{"_", [type: :'list/hash']}|schema], vals, prefix, [], [])
   end
-  def match(_schema, [], _prefix, [], acc),  do: {:ok, acc}
-  def match(_schema, [], _prefix, errs, _), do: {:error, errs}
-  def match(schema, [{rk, v}|rest], prefix, errs, acc)  do
-    nested? = is_list(v) and length(v) > 0 and is_tuple(hd(v)) or true
+  defp merge(a, []), do: a
 
-    pickkey(schema, rk, prefix, nested?) |>
-      match2(schema, {rk, v}, rest, prefix, errs, acc)
-  end
+  defp validate(val, rkey, skeys, schema, acc) do
+    case renderschema skeys, schema, rkey do
+      {:ok, [sk, schema]} ->
+        case schema[sk][:validator].(val, rkey, sk, schema, acc) do
+          # Propagate  child errors
+          [{:error, _}, _] = err ->
+            err
 
-  def match2({:ok, k}, schema, {rk, v}, rest, prefix, errs, acc) do
-    case parse(schema[k][:type], schema[k], k, v) do
-      :ok when is_list(v) ->
-        case match schema, v, mkey(rk, prefix), [], [] do
-          {:ok, v} ->
-            match schema, rest, prefix, errs, List.keystore(acc, rk, 0, {rk, v})
-
-          {:error, [err]} ->
-            match schema, rest, prefix, [err | errs], acc
+          res ->
+            [res, rkey]
         end
 
-      :ok ->
-        match schema, rest, prefix, errs, List.keystore(acc, rk, 0, {rk, v})
+      {:error, _} = err ->
+        err
 
-      :continue ->
-        match schema, rest, prefix, errs, List.keystore(acc, rk, 0, {rk, v})
+      [{:error, _}, _rkey] = err ->
+        err
+    end
+  end
 
-      :ignore ->
-        match schema, rest, prefix, errs, acc
 
-      {:error, err} ->
-        match schema, rest, prefix, [expanderr(mkey(rk, prefix), err) | errs], acc
+  def renderschema(skeys, schema, rkey) do
+    case Dict.take schema, skeys do
+      [] -> [{:error, "unable to lookup schema: #{Enum.join(rkey, ", ")}"}, rkey]
+      [{sk, _}|_] ->
+        {:ok, [sk, Dict.merge(schema, [{sk, Dict.merge(schema[sk],
+                                       [{:key, sk} | mapprops(schema[sk][:type])])} ] )]}
+    end
+  end
+
+  defp mapprops(:str),             do: mapprops(:string)
+  defp mapprops(:regex),           do: mapprops(:string)
+  defp mapprops(:int),             do: mapprops(:integer)
+  defp mapprops(:id),              do: [type: :string,
+                                        validator: &__MODULE__.Validators.String.valid?/5,
+                                        regex: ~r/^[a-zA-Z0-9+-]+$/]
+  defp mapprops(:resource),        do: [type: :string,
+                                        validator: &__MODULE__.Validators.String.valid?/5,
+                                        regex: ~r/^[a-zA-Z0-9-+\/]+$/]
+  defp mapprops(:string),          do: [type: :string,
+                                        validator: &__MODULE__.Validators.String.valid?/5]
+  defp mapprops(:integer),         do: [type: :string,
+                                        validator: &__MODULE__.Validators.Integer.valid?/5]
+  defp mapprops(:enum),            do: [type: :enum,
+                                        validator: &__MODULE__.Validators.Enum.valid?/5]
+  defp mapprops(:set),             do: [type: :set,
+                                        validator: &__MODULE__.Validators.Set.valid?/5]
+  defp mapprops(:'list/id'),       do: [type: :set,
+                                        validator: &__MODULE__.Validators.Set.valid?/5,
+                                        itemvalidator: {
+                                          &__MODULE__.Validators.String.valid?/5,
+                                          mapprops(:id)}]
+  defp mapprops(:'list/resource'), do:  [type: :set,
+                                        validator: &__MODULE__.Validators.Set.valid?/5,
+                                        itemvalidator: {
+                                          &__MODULE__.Validators.String.valid?/5,
+                                          mapprops(:resource)}]
+  defp mapprops(:map),             do: [type: :map,
+                                        validator: &__MODULE__.Validators.Map.valid?/5]
+  defp mapprops(:'list/hash'),     do: [type: :map,
+                                        validator: &__MODULE__.Validators.Map.valid?/5]
+  defp mapprops(:ignore),          do: [type: :ignore,
+                                        validator: &__MODULE__.Validators.Ignore.valid?/5]
+
+  defmodule Validators.String do
+    def valid?(val, _rkey, sk, schema, _acc) do
+      case schema[sk][:regex] do
+        _ when not is_binary(val) -> {:error, "not a string"}
+        nil -> {:ok, val}
+        regex ->
+          cond do
+            Regex.match? regex, val -> {:ok, val}
+            true -> {:error, "invalid string format"}
+          end
       end
-  end
-  def match2({:error, err}, schema, {k,_}, rest, prefix, errs, acc) do
-    match(schema, rest, prefix, [expanderr(k, err) | errs], acc)
-  end
-
-  def mkey(key, prefix), do: mkey(key, prefix, false)
-  def mkey(key, prefix, wildcard?), do: mkey2(key, prefix, wildcard?)
-
-  defp mkey2(key, [], _), do: [key]
-  defp mkey2(key, [_|prefix], true), do: [key, "*" | prefix]
-  defp mkey2(key, prefix, false), do: [key | prefix]
-  defp flattenkey(k), do: Enum.join(Enum.reverse(k), ".")
-
-  defp fill_tree(acc, [], _v), do: acc
-  defp fill_tree(acc, [k], v) do
-    case acc[k] do
-      nil -> [{k, v} | acc]
-      _ -> acc
-    end
-  end
-  defp fill_tree(acc, [k|rest], v), do:
-    List.keystore(acc, k, 0, {k, fill_tree((acc[k] || []), rest, v)})
-
-  defp pickkey(schema, k, prefix, nested?) do
-
-    k0 = flattenkey(mkey(k, prefix))
-    k1 = flattenkey(mkey(k, prefix, true))
-    k2 = flattenkey(mkey("*", prefix, false))
-    cond do
-      nil !== schema[k0] -> {:ok, k0}
-      nil !== schema[k1] -> {:ok, k1}
-      nil !== schema[k2] -> {:ok, k2}
-      nested? -> {:ok, "_"}
-      true ->
-        newk = mkey(k, prefix)
-        {:error, "cannot validate '#{newk}', not in schema"}
     end
   end
 
-  defp parse(:str, _props, _k, <<_ :: binary>>), do: :ok
+  defmodule Validators.Integer do
+    def valid?(val, _rkey, sk, schema, _acc) when is_integer(val) do
+      max = schema[sk][:max]
+      min = schema[sk][:min]
 
-  defp parse(:id, _props, k, <<id :: binary>>) do
-    case Regex.match? %r/^[a-zA-Z0-9-]+$/, id do
-      true  -> :ok
-      false -> {:error, "value of '#{k}' not a valid id"}
+      cond do
+        nil == max and nil == min ->
+          :ok
+
+        is_integer(max) and is_integer(min) and val < min and val > max ->
+          {:error, "value must be in range #{min}..#{max}"}
+
+        is_integer(max) and val > max ->
+          {:error, "value must smaller than #{max}"}
+
+        is_integer(min) and val < min ->
+          {:error, "value must greater than #{min}"}
+
+        true ->
+          :ok
+      end
+    end
+    def valid?(val, rkey, sk, schema, acc) when is_binary(val) do
+      case Integer.parse(val) do
+        {val, ""} ->
+          valid?(val, rkey, sk, schema, acc)
+
+        {_, _buf} ->
+          {:error, "not a valid integer"}
+      end
     end
   end
 
-  defp parse(:resource, _props, k, <<id :: binary>>) do
-    case Regex.match? %r/^[a-zA-Z0-9-\/@.]+$/, id do
-      true  -> :ok
-      false -> {:error, "value of '#{k}' not a valid resource"}
+  defmodule Validators.Enum do
+    def valid?(val, rk, sk, schema, acc) do
+      match = cond do
+        is_binary(schema[sk][:match]) -> acc[schema[sk][:match]]
+        true -> schema[sk][:match] end
+
+      if (schema[sk][:map] || false) and match !== nil do
+        match = Dict.keys match
+      end
+
+      case match !== nil and val in match do
+        true -> :ok
+
+        false when nil !== match ->
+          {:error, "enum value must be one off #{Enum.join(match, ", ")}"}
+
+        false ->
+          {:error, "enum value matching against nil"}
+      end
     end
   end
 
-  defp parse(:regex, props, k, <<id :: binary>>) do
-    case Regex.match? props[:regex], id do
-      true  -> :ok
-      false -> {:error, "value of '#{k}' is not a valid id"}
+  defmodule Validators.Set do
+    def valid?(val, rk, sk, schema, acc) when is_list(val) do
+      case schema[sk][:itemvalidator] do
+        {nil, _} ->
+          :ok
+
+        {validator, props} ->
+          pos = Enum.find_index val, fn(v) ->
+            case validator.(v, rk, props, schema, acc) do
+              {:ok, _} -> false
+              :ok      -> false
+              _        -> true
+            end
+          end
+
+          cond do
+            nil !== pos -> {:error, "element #{pos} is not a valid #{props[:type]}"}
+            true        -> :ok
+          end
+      end
+    end
+    def valid?(_val, rkey, _sk, _schema, _acc), do:
+      [{:error, "key is not a set"}, rkey]
+  end
+
+  defmodule Validators.Map do
+    def valid?(val, rkey,  sk, schema, acc), do: valid?(val, rkey, sk, schema, acc, [])
+    def valid?([],  rkey, _sk, _schema, _acc, mapacc), do: {:ok, Enum.reverse(mapacc)}
+    def valid?([{k, :null} | rest], rkey, sk, schema, acc, mapacc), do:
+      valid?(rest, rkey, sk, schema, acc, mapacc)
+    def valid?([{k, :undefined}|rest], rkey, sk, schema, acc, mapacc), do:
+      valid?(rest, rkey, sk, schema, acc, mapacc)
+    def valid?([{k, nil}|rest], rkey, sk, schema, acc, mapacc), do:
+      valid?(rest, rkey, sk, schema, acc, mapacc)
+    def valid?([{k,v}|rest], rkey, sk, schema, acc, mapacc) do
+      subrkey = LQRC.Schema.key(k, rkey)
+      subkeys = LQRC.Schema.schemakeys schema, sk, k
+
+      case LQRC.Schema.renderschema subkeys, schema, [LQRC.Schema.key(k, sk)] do
+        {:ok, [subkey, schema]} ->
+          case schema[sk][:itemvalidator] || {schema[subkey][:validator], []} do
+            {nil, _} ->
+              valid? rest, rkey, sk, schema, acc, [{k, v} | mapacc]
+
+            {validator, props} ->
+              case validator.(v, subrkey, subkey, schema, acc) do
+                :ok ->
+                  valid? rest, rkey, sk, schema, acc, [{k, v} | mapacc]
+
+                {:ok, v} ->
+                  valid? rest, rkey, sk, schema, acc, [{k, v} | mapacc]
+
+                :skip ->
+                  valid? rest, rkey, sk, schema, acc, mapacc
+
+                {:error, _} = err->
+                  [err, subrkey]
+
+                [{:error, _}, _] = err ->
+                  err
+              end
+          end
+
+        [{:error, _} = err, _rkey] ->
+          [err, LQRC.Schema.key(k, sk)]
+      end
+    end
+    def valid?([_|rest], rk, _sk, _schema, _acc, _mapacc) do
+      [{:error, "none key/value in object"}, rk]
     end
   end
 
-  defp parse(:enum, props, _k, val) do
-    case Enum.member? props[:match], val do
-      true  -> :ok
-      false ->
-        vals = "'#{Enum.join(props[:match], "', '")}'"
-        {:error, "value of '#{val}' must be one of #{vals}"}
+  defmodule Validators.Ignore do
+    def valid?(val, _rk, sk, schema, _acc) do
+      case schema[sk][:delete] do
+        nil   -> :skip
+        true  -> :skip
+        false -> {:ok, val}
+      end
     end
   end
-
-  defp parse(:int, props, k, val) when is_integer(val) do
-    {min, max} = {props[:min], props[:max]}
-    cond do
-      nil !== min and nil !== max ->
-        expandbool val >= min and val <= max,
-          {:error, "#{k} = #{val} must be in the range #{min}..#{max}"}
-
-      nil !== max ->
-        expandbool val <= max,
-          {:error, "#{k} = #{val} must be less than or equal to #{max}"}
-
-      nil !== min ->
-        expandbool val >= min,
-          {:error, "#{k} = #{val} must be great than or equal to #{min}"}
-
-      true ->
-        :ok
-    end
-  end
-  defp parse(:int, _props, k, _val), do:
-    {:error, "value of '#{k}' is not a integer"}
-
-  defp parse(:'list/hash', props, _k, []) do
-    case props[:deep] do
-      false -> :continue
-      _ -> :ok
-    end
-  end
-  defp parse(:'list/hash' = t, props, k, [{_,_}|rest]), do:
-    parse(t, props, k, rest)
-  defp parse(:'list/hash', _props, _k, [e|_]), do:
-    {:error, "element '#{e}' not a key/value pair"}
-  defp parse(:'list/hash', _props, _k, _), do:
-    {:error, "not a key/value list"}
-
-  defp parse(:'list/id', _props, _k, []), do:
-    :continue
-  defp parse(:'list/id' = t, props, k, [<<e :: binary>>|rest]) do
-    case Regex.match? %r/^[a-zA-Z0-9-]+$/, e do
-        true -> parse(t, props, k, rest)
-        false -> {:error, "element '#{e}' not a valid id"}
-    end
-  end
-  defp parse(:'list/id', _props, _k, [e|_]), do:
-    {:error, "element '#{e}' not a valid id"}
-
-  defp parse(:'list/resource', _props, _k, []), do:
-    :continue
-  defp parse(:'list/resource' = t, props, k, [<<e :: binary>>|rest]) do
-    case Regex.match? %r/^[a-zA-Z0-9-\/@.]+$/, e do
-        true -> parse(t, props, k, rest)
-        false -> {:error, "element '#{e}' not a valid resource"}
-    end
-  end
-  defp parse(:'list/resource', _props, _k, [e|_]), do:
-    {:error, "element '#{e}' not a valid resource"}
-
-  defp parse(:ignore, _props, _k, _), do: :ignore
-
-  defp parse(type, _props, k, _val), do:
-    {:error, "invalid type '#{type}' for '#{k}'"}
-
-  defp expandbool(:true, _), do: :ok
-  defp expandbool(:false, err), do: err
-
-  defp expanderr(k, err), do: [{"key", flattenkey(k)}, {"error", err}]
 end
