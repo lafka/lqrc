@@ -114,7 +114,7 @@ defmodule LQRC.Schema do
                                         regex: ~r/^[a-zA-Z0-9-+\/]+$/]
   defp mapprops(:string),          do: [type: :string,
                                         validator: &__MODULE__.Validators.String.valid?/5]
-  defp mapprops(:integer),         do: [type: :string,
+  defp mapprops(:integer),         do: [type: :integer,
                                         validator: &__MODULE__.Validators.Integer.valid?/5]
   defp mapprops(:enum),            do: [type: :enum,
                                         validator: &__MODULE__.Validators.Enum.valid?/5]
@@ -178,7 +178,7 @@ defmodule LQRC.Schema do
         {val, ""} ->
           valid?(val, rkey, sk, schema, acc)
 
-        {_, _buf} ->
+        error ->
           {:error, "not a valid integer"}
       end
     end
