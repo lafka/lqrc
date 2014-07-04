@@ -21,13 +21,13 @@ defmodule LQRC.Schema do
       case v[:default] do
         nil -> acc
         val ->
-          merge(Enum.reverse(String.split(k, ".")) |> Enum.reduce(val, fn(nk, acc0) ->
-            [{nk, acc0}]
-          end), acc)
+          defaults = Enum.reverse(String.split(k, ".")) |>
+            Enum.reduce(val, fn(nk, acc0) -> [{nk, acc0}] end)
+          merge(acc, defaults)
       end
     end)
 
-    match(schema, merge(defaultvals, vals), Dict.keys(vals), prefix, [:ok, nil])
+    match(schema, merge(vals, defaultvals, true), Dict.keys(vals), prefix, [:ok, nil])
   end
   def match(schema, vals, [k|rest], prefix, [:ok, _prevk]) do
     sk = schemakeys(schema, prefix, k)
@@ -63,15 +63,21 @@ defmodule LQRC.Schema do
 
   def key(k, prefix), do: Enum.join(Enum.reverse([k, prefix]), ".")
 
-  defp merge(a, [{kb,vb}|restB]) do
-    case Dict.fetch a, kb do
+  defp merge(acc, [], _), do: acc
+  defp merge(acc, [{kb,vb}|restB], ignoreexisting? // false) do
+    case Dict.fetch acc, kb do
       {:ok, [{_,_}|_] = va} ->
-        merge Dict.put(a, kb, merge(va, vb)), restB
-      x ->
-        merge Dict.put(a, kb, vb), restB
+        merge Dict.put(acc, kb, merge(va, vb, ignoreexisting?)),
+          restB,
+          ignoreexisting?
+
+      {:ok, val} when ignoreexisting? ->
+        merge acc, restB, ignoreexisting?
+
+      _ ->
+        merge Dict.put(acc, kb, vb), restB, ignoreexisting?
     end
   end
-  defp merge(a, []), do: a
 
   defp validate(val, rkey, skeys, schema, acc) do
     case renderschema skeys, schema, rkey do
@@ -98,8 +104,9 @@ defmodule LQRC.Schema do
     case Dict.take schema, skeys do
       [] -> [{:error, "unable to lookup schema: #{Enum.join(rkey, ", ")}"}, rkey]
       [{sk, _}|_] ->
-        {:ok, [sk, Dict.merge(schema, [{sk, Dict.merge(schema[sk],
-                                       [{:key, sk} | mapprops(schema[sk][:type])])} ] )]}
+        {:ok, [sk, Dict.merge(schema,
+                              [{sk, Dict.merge([{:key, sk} | mapprops(schema[sk][:type])],
+                                               schema[sk])} ])]}
     end
   end
 

@@ -155,6 +155,8 @@ defmodule LqrcTest do
   test "domain schema" do
     :ok = LQRC.Domain.write :schema, [key: nil, schema: [
       {"default",            [type: :str, default: "val"]},
+      {"nested", [type: :map]},
+      {"nested.default", [type: :map]},
       {"nested.default.val", [type: :str, default: "myval"]},
       {"nested.default.val2", [type: :str, default: "yourval"]},
       {"str",       [type: :map]},
@@ -177,12 +179,29 @@ defmodule LqrcTest do
     ]]
 
     defopts = [putopts: [:return_body]]
-    m = [{"nested", [{"default", [{"val", "myval"},
-                                  {"val2", "yourval"}]}]},
-         {"default", "val"}]
-    m2 = Dict.put m, "default", "newval"
-    assert {:ok, m}  == LQRC.write :schema, ["default"], [], defopts
-    assert {:ok, m2} == LQRC.write :schema, ["default"], [{"default", "newval"}], defopts
+    m  = [{"default", "val"},
+      {"nested", [
+        {"default", [
+          {"val2", "yourval"},
+          {"val", "myval"}
+      ]}]}
+    ]
+    m2 = [{"default", "newval"},
+      {"nested", [
+        {"default", [
+          {"val", "mynewval"},
+          {"val2", "yourval"}
+      ]}]}
+    ]
+
+    {:ok, mmatch}  = LQRC.write :schema, ["default"], [], defopts
+    {:ok, m2match} = LQRC.write :schema, ["default"], [
+      {"default", "newval"},
+      {"nested", [{"default", [{"val", "mynewval"}]}]}
+    ], defopts
+
+    assert m  == Enum.sort(mmatch)
+    assert m2 == Enum.sort(m2match)
 
     assert :ok = LQRC.write :schema, ["str.id"], [
       {"str", [{"id", "abc"}]}]
