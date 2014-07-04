@@ -328,8 +328,8 @@ defmodule LqrcTest do
       {"a.*.*", [type: :string]},
     ]]
 
-    :ok = LQRC.write :nilvals, ["x"], [{"a", [{"b", [{"c", "x"}, {"d", "y"}]}]}]
-    :ok = LQRC.write :nilvals, ["x"], [{"a", [{"b", nil}]}]
+    :ok = LQRC.write  :nilvals, ["x"], [{"a", [{"b", [{"c", "x"}, {"d", "y"}]}]}]
+    :ok = LQRC.update :nilvals, ["x"], [{"a", [{"b", nil}]}]
     assert {:ok, [{"a", []}]} == LQRC.read :nilvals, ["x"]
   end
 
