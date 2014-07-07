@@ -31,7 +31,14 @@ defmodule LQRC.Util do
   end
 
   def add_to_parent2(domain, sel, {idx, val}) do
-    LQRC.update domain, sel, [{idx, val}]
+    case LQRC.read domain, sel, [return_obj: true] do
+      {:ok, vals, obj} ->
+        val = Enum.uniq val ++ (vals[idx] || []) |> Enum.sort
+        LQRC.update domain, sel, [{idx, val}], [], obj
+
+      err ->
+        err
+    end
   end
 
   def decodeobj(spec, _sel, obj) do

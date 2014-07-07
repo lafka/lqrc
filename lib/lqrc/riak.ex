@@ -325,15 +325,11 @@ defmodule LQRC.Riak do
   def ukeymergerec(a, []), do: a
   def ukeymergerec([], b), do: b
   def ukeymergerec([{k, v} | rest], b) do
-    set? = is_list(v) && length(v) > 0 && (not is_tuple(hd(v)))
     if nil === v or :undefined === v do
       ukeymergerec(rest, List.keydelete(b, k, 0))
     else
       v = case b[k] do
-        oldval when set? and is_list(v) and is_list(oldval) ->
-          :lists.umerge(v, oldval)
-
-        oldval when is_list(v) and is_list(oldval) ->
+        oldval when is_list(v) and is_list(oldval) and is_tuple(hd(v)) ->
           ukeymergerec v, oldval
 
         _ ->
