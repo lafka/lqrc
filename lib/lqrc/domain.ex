@@ -39,7 +39,7 @@ defmodule LQRC.Domain do
     case :ets.lookup :domains, domain do
       [{^domain, spec}] -> {:ok, spec}
       [] ->
-        case LQRC.read lqrc, ["domains", atom_to_binary domain] do
+        case LQRC.read lqrc, ["domains", Atom.to_string(domain)] do
           {:ok, spec} = res ->
             true = :ets.insert :domains, {domain, spec}
             res
@@ -67,7 +67,7 @@ defmodule LQRC.Domain do
     case Enum.reduce match, Keyword.keys(props), fn(a, b) -> b -- [a] end do
       [] ->
         :ets.delete :domains, domain
-        LQRC.write lqrc, ["domains", atom_to_binary domain], props
+        LQRC.write lqrc, ["domains", Atom.to_string(domain)], props
 
       errs ->
         {:error, {:invalid_keys, errs}}

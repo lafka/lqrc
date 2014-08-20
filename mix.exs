@@ -3,8 +3,7 @@ defmodule LRQC.Mixfile do
 
   def project do
     [ app: :lqrc,
-      version: "0.1.4-1",
-      #elixir: "~> 0.10.1",
+      version: "0.2.0",
       deps: deps ]
   end
 
@@ -17,7 +16,9 @@ defmodule LRQC.Mixfile do
 
   defp deps do
     [ {:riakc, github: "basho/riak-erlang-client", branch: "master"},
-      {:jsx, github: "talentdeficit/jsx", tag: "v1.4.4"},
-      {:pooler, github: "seth/pooler", tag: "1.0.0"} ]
+      {:jsx, "~> 2.0.4", override: true},
+      {:jsxn, "~> 0.2.1"},
+      {:pooler, github: "seth/pooler", tag: "1.0.0"},
+      {:erldocker, github: "proger/erldocker", only: :test, env: :test}]
   end
 end

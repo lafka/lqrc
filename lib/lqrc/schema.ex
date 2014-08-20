@@ -2,7 +2,7 @@ defmodule LQRC.Schema do
   @doc """
   Check if `vals` are valid according to `schema`
   """
-  def validate(schema, vals) do
+  def valid?(schema, vals) do
     case match schema, vals do
       {:ok, _} -> :ok
       res -> res
@@ -11,103 +11,88 @@ defmodule LQRC.Schema do
 
   @doc """
   Parse `vals` according to schema, filling in defaults where applicable
-
-  Undefined parent elements of nested keys will have be implicitly
-  typed as list/hash values.
   """
-  def match(schema, vals), do: match(schema, vals, [])
-  def match(schema, vals, prefix) do
-    defaultvals = Enum.reduce(schema, [], fn({k,v}, acc) ->
+  def match(schema, vals, path \\ [], defaults \\ nil) do
+    ctx = matchctx schema, path, defaults || maybe_add_default_vals(schema, path)
+
+    case Enum.reduce vals, ctx, &validatepair/2 do
+      %{error: nil, acc: acc} = ctx ->
+        {:ok, acc}
+
+      %{error: {k, err}} ->
+        {:error, %{:key => k, :error => err}}
+    end
+  end
+
+  defp matchctx(schema, path, vals) do
+    schema = Enum.map schema, fn({k, props}) ->
+      {k, :lists.ukeymerge(1, props, mapprops(props[:type]))}
+    end
+
+    %{  schema: schema,
+        acc: vals,       # The result of schema matches
+        path: path,      # Keep track of position in the tree
+        error: nil
+    }
+  end
+
+  defp maybe_add_default_vals(schema, []) do
+    Enum.reduce(schema, %{}, fn({k,v}, acc) ->
+      # @todo; olav; 2014-08-20 - allow wildcard defaults to augment collections
+      #parts = String.split(k, ".") |> Enum.reduce(0, fn
+      #  ("*", acc) -> [Enum.at(path, length(acc)) | acc]
+      #  (p, acc) -> [p | acc]
+      #end) |> Enum.reverse
+      #prefix? = :lists.prefix path, parts
+
       case v[:default] do
         nil -> acc
         val ->
-          defaults = Enum.reverse(String.split(k, ".")) |>
-            Enum.reduce(val, fn(nk, acc0) -> [{nk, acc0}] end)
-          merge(acc, defaults)
+          default = Enum.reverse(String.split(k, ".")) |>
+            Enum.reduce(val, fn(nk, acc0) -> Dict.put %{}, nk, acc0 end)
+          LQRC.Riak.ukeymergerec default, acc
       end
     end)
-
-    match(schema, merge(vals, defaultvals, true), Dict.keys(vals), prefix, [:ok, nil])
   end
-  def match(schema, vals, [k|rest], prefix, [:ok, _prevk]) do
-    sk = schemakeys(schema, prefix, k)
+  defp maybe_add_default_vals(_schema, _path), do: %{}
 
-    match(schema, vals, rest, prefix,
-      validate(vals[k], [k|prefix], sk, schema, vals))
-  end
-  def match(schema, vals, [k|rest], prefix, [{:ok, val}, prevk]) do
-    vals = Dict.put vals, key(prevk, prefix), val
-    sk = schemakeys(schema, prefix, k)
+  defp validatepair({k, v}, %{error: nil, schema: schema, acc: acc, path: path} = ctx) do
+    itempath = path ++ [k]
 
-    match(schema, vals, rest, prefix,
-      validate(vals[k], [k|prefix], sk, schema, vals))
-  end
-  def match(schema, vals, [k|rest], prefix, [:skip, prevk]) do
-    vals = Dict.delete vals, key(prevk, prefix)
-    sk = schemakeys(schema, prefix, k)
+    case findkey itempath, Dict.keys(schema) do
+      [schemakey | _] ->
+        props = :proplists.get_value schemakey, schema
 
-    match(schema, vals, rest, prefix,
-      validate(vals[k], [k|prefix], sk, schema, vals))
-  end
-  def match(_schema, vals, [], prefix, [:ok, _prevk]), do: {:ok, vals}
-  def match(_schema, vals, [], prefix, [{:ok, val}, prevk]), do:
-    {:ok, Dict.put(vals, key(prevk, prefix), val)}
-  def match(_schema, vals, [], prefix, [:skip, prevk]), do:
-    {:ok, Dict.delete(vals, key(prevk, prefix))}
-  def match(_schema, _vals, _keys, prefix, [{:error, err}, prevk]), do:
-    {:error, [{key(prevk, prefix), err}]}
+        case (props[:validator].(v, itempath, schemakey, schema, acc)) do
+          :ok ->
+            %{ctx | :acc => Dict.put(acc, k, v)}
 
-  def schemakeys(schema, prefix, k) do
-    Enum.map [k, "*", key(k, "*")], &key(&1, prefix)
-  end
+          {:ok, newval} ->
+            %{ctx | :acc => Dict.put(acc, k, newval)}
 
-  def key(k, prefix), do: Enum.join(Enum.reverse([k, prefix]), ".")
+          :skip ->
+            %{ctx | :acc => Dict.delete(acc, k)}
 
-  defp merge(acc, [], _), do: acc
-  defp merge(acc, [{kb,vb}|restB], ignoreexisting? // false) do
-    case Dict.fetch acc, kb do
-      {:ok, [{_,_}|_] = va} ->
-        merge Dict.put(acc, kb, merge(va, vb, ignoreexisting?)),
-          restB,
-          ignoreexisting?
+          {:error, err} when is_map(err) ->
+            %{ctx | :error => {err[:key], err[:error]}}
 
-      {:ok, val} when ignoreexisting? ->
-        merge acc, restB, ignoreexisting?
-
-      _ ->
-        merge Dict.put(acc, kb, vb), restB, ignoreexisting?
-    end
-  end
-
-  defp validate(val, rkey, skeys, schema, acc) do
-    case renderschema skeys, schema, rkey do
-      {:ok, [sk, schema]} ->
-        case schema[sk][:validator].(val, rkey, sk, schema, acc) do
-          # Propagate  child errors
-          [{:error, _}, _] = err ->
-            err
-
-          res ->
-            [res, rkey]
+          {:error, err} ->
+            %{ctx | :error => {itempath, err}}
         end
 
-      {:error, _} = err ->
-        err
-
-      [{:error, _}, _rkey] = err ->
-        err
+      [] ->
+        %{ctx | :error => {:noschema, path ++ [k]}}
     end
   end
+  defp validatepair({k, v}, %{error: err} = ctx) when err !== nil, do: ctx
 
+  defp findkey(path, keys) do
+    key = Enum.join path, "."
 
-  def renderschema(skeys, schema, rkey) do
-    case Dict.take schema, skeys do
-      [] -> [{:error, "unable to lookup schema: #{Enum.join(rkey, ", ")}"}, rkey]
-      [{sk, _}|_] ->
-        {:ok, [sk, Dict.merge(schema,
-                              [{sk, Dict.merge([{:key, sk} | mapprops(schema[sk][:type])],
-                                               schema[sk])} ])]}
-    end
+    rx = (for k <- path, do: "(?:#{k}|\\*)\\.") ++ ["?$"]
+    {:ok, rx} = Regex.compile Enum.join ["^" | rx]
+
+    Enum.filter keys, &Regex.match?(rx, &1)
   end
 
   defp mapprops(:str),             do: mapprops(:string)
@@ -146,7 +131,7 @@ defmodule LQRC.Schema do
 
   defmodule Validators.String do
     def valid?(val, _rkey, sk, schema, _acc) do
-      case schema[sk][:regex] do
+      case :proplists.get_value(sk, schema, nil)[:regex] do
         _ when not is_binary(val) -> {:error, "not a string"}
         nil -> {:ok, val}
         regex ->
@@ -160,8 +145,8 @@ defmodule LQRC.Schema do
 
   defmodule Validators.Integer do
     def valid?(val, _rkey, sk, schema, _acc) when is_integer(val) do
-      max = schema[sk][:max]
-      min = schema[sk][:min]
+      max = :proplists.get_value(sk, schema, nil)[:max]
+      min = :proplists.get_value(sk, schema, nil)[:min]
 
       cond do
         nil == max and nil == min ->
@@ -194,15 +179,21 @@ defmodule LQRC.Schema do
   defmodule Validators.Enum do
     def valid?(val, rk, sk, schema, acc) do
       match = cond do
-        is_binary(schema[sk][:match]) -> acc[schema[sk][:match]]
-        true -> schema[sk][:match] end
+        is_binary(matchkey = :proplists.get_value(sk, schema, nil)[:match]) ->
+          acc[matchkey]
 
-      if (schema[sk][:map] || false) and match !== nil do
-        match = Dict.keys match
+        true ->
+          :proplists.get_value(sk, schema, nil)[:match]
+      end
+
+      match = if (:proplists.get_value(sk, schema, nil)[:map] || false) and match !== nil do
+        Dict.keys match
+      else
+        match
       end
 
       case match !== nil and val in match do
-        true -> :ok
+        true -> {:ok, val}
 
         false when nil !== match ->
           {:error, "enum value must be one off #{Enum.join(match, ", ")}"}
@@ -215,7 +206,7 @@ defmodule LQRC.Schema do
 
   defmodule Validators.Set do
     def valid?(val, rk, sk, schema, acc) when is_list(val) do
-      case schema[sk][:itemvalidator] do
+      case :proplists.get_value(sk, schema, nil)[:itemvalidator] do
         {nil, _} ->
           :ok
 
@@ -234,60 +225,35 @@ defmodule LQRC.Schema do
           end
       end
     end
-    def valid?(_val, rkey, _sk, _schema, _acc), do:
-      [{:error, "key is not a set"}, rkey]
+    def valid?(_val, _rkey, _sk, _schema, _acc), do:
+      {:error, "key is not a set"}
   end
 
   defmodule Validators.Map do
-    def valid?(val, rkey,  sk, schema, acc), do: valid?(val, rkey, sk, schema, acc, [])
-    def valid?([],  rkey, _sk, _schema, _acc, mapacc), do: {:ok, Enum.reverse(mapacc)}
-    def valid?([{k, :null} | rest], rkey, sk, schema, acc, mapacc), do:
-      valid?(rest, rkey, sk, schema, acc, mapacc)
-    def valid?([{k, :undefined}|rest], rkey, sk, schema, acc, mapacc), do:
-      valid?(rest, rkey, sk, schema, acc, mapacc)
-    def valid?([{k, nil}|rest], rkey, sk, schema, acc, mapacc), do:
-      valid?(rest, rkey, sk, schema, acc, mapacc)
-    def valid?([{k,v}|rest], rkey, sk, schema, acc, mapacc) do
-      subrkey = LQRC.Schema.key(k, rkey)
-      subkeys = LQRC.Schema.schemakeys schema, sk, k
-
-      case LQRC.Schema.renderschema subkeys, schema, [LQRC.Schema.key(k, sk)] do
-        {:ok, [subkey, schema]} ->
-          case schema[sk][:itemvalidator] || {schema[subkey][:validator], []} do
-            {nil, _} ->
-              valid? rest, rkey, sk, schema, acc, [{k, v} | mapacc]
-
-            {validator, props} ->
-              case validator.(v, subrkey, subkey, schema, acc) do
-                :ok ->
-                  valid? rest, rkey, sk, schema, acc, [{k, v} | mapacc]
-
-                {:ok, v} ->
-                  valid? rest, rkey, sk, schema, acc, [{k, v} | mapacc]
-
-                :skip ->
-                  valid? rest, rkey, sk, schema, acc, mapacc
-
-                {:error, _} = err->
-                  [err, subrkey]
-
-                [{:error, _}, _] = err ->
-                  err
-              end
-          end
-
-        [{:error, _} = err, _rkey] ->
-          [err, LQRC.Schema.key(k, sk)]
-      end
+    def valid?(%{} = vals, rk, _sk, schema, acc) do
+      LQRC.Schema.match(schema, vals, rk, acc[List.last(rk)])
     end
-    def valid?([_|rest], rk, _sk, _schema, _acc, _mapacc) do
-      [{:error, "none key/value in object"}, rk]
+    def valid?([{_,_} | _] = vals, rk, sk, schema, acc) do
+      conv(vals, &LQRC.Schema.match(schema, &1, rk, acc[List.last(rk)]))
     end
+    def valid?([_|_], _rk, _sk, _schema, _acc), do:
+      {:error, "all map items must be a k/v pair"}
+    def valid?(val, _rk, _sk, _schema, _acc), do:
+      {:error, "expected item of type 'map'"}
+
+    defp conv(vals, csp), do:
+      conv(vals, csp, %{})
+    defp conv([], csp, acc), do:
+      csp.(acc)
+    defp conv([{k,v}|rest], csp, acc), do:
+      conv(rest, csp, Map.put(acc, k, v))
+    defp conv([v|rest], csp, acc), do:
+      {:error, "all map items must be a k/v pair"}
   end
 
   defmodule Validators.Ignore do
     def valid?(val, _rk, sk, schema, _acc) do
-      case schema[sk][:delete] do
+      case :proplists.get_value(sk, schema, nil)[:delete] do
         nil   -> :skip
         true  -> :skip
         false -> {:ok, val}

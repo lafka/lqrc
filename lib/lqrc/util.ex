@@ -12,7 +12,7 @@ defmodule LQRC.Util do
   def add_to_parent(spec, sel, acc, [{domain, key, idx}|rest]) do
     case add_to_parent2 domain,
                         Enum.slice(sel, 0, length(sel) -1),
-                        {idx, [{acc[key], List.last(sel)}]}  do
+                        {idx, {acc[key], List.last(sel)}}  do
       {:ok, _} -> add_to_parent spec, sel, acc, rest
       err -> err
     end
@@ -33,8 +33,11 @@ defmodule LQRC.Util do
   def add_to_parent2(domain, sel, {idx, val}) do
     case LQRC.read domain, sel, [return_obj: true] do
       {:ok, vals, obj} ->
-        val = Enum.uniq val ++ (vals[idx] || []) |> Enum.sort
-        LQRC.update domain, sel, [{idx, val}], [], obj
+        val2 = case val do
+          [_|_] -> Enum.uniq val ++ (vals[idx] || []) |> Enum.sort
+          {k,v} -> Dict.put vals[idx] || %{}, k, v
+        end
+        LQRC.update domain, sel, [{idx, val2}], [], obj
 
       err ->
         err

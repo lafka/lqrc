@@ -38,6 +38,11 @@ defmodule LQRC.Riak do
         end
     end
 
+    vals = case vals do
+      [] -> %{}
+      [{_,_}|_] -> Dict.merge %{}, vals # convert root level to a map
+      _ -> vals end
+
     ((({:ok, set_key(spec[:datatype], spec[:key], sel, vals)}
       |> dofun(spec, spec[:prewrite], sel))
       :: write_obj(spec, sel, obj, opts))
@@ -76,6 +81,7 @@ defmodule LQRC.Riak do
     passobj? = opts[:return_obj]
     case read_obj spec, sel, opts do
       {:ok, obj} ->
+
         case spec[:datatype] || decode_md obj do
           {nil, vals} when passobj? ->
             {:ok, vals, obj}
@@ -83,7 +89,7 @@ defmodule LQRC.Riak do
           {nil, vals} ->
             {:ok, vals}
 
-          {_md, vals} when is_list(vals) ->
+          {_md, vals} when is_map(vals) or is_list(vals) ->
             opts = :lists.ukeymerge 1, opts, spec[:riak]
             # Update object to resolve sibling conflicts, update/5
             # uses :if_not_modified to try to ensure nothing gets out
@@ -183,9 +189,13 @@ defmodule LQRC.Riak do
     write_obj vals, spec, sel, obj, opts
   end
   def write_obj(vals, spec, sel, obj, opts) do
+    dt = spec[:datatype]
     matchedvals = case spec[:schema] do
-      [_|_] = schema->
+      [_|_] = schema ->
         LQRC.Schema.match schema, vals
+
+      _ when nil === dt -> # Make sure values are converted to a map
+        {:ok, Dict.merge(%{}, vals)}
 
       _ ->
         {:ok, vals}
@@ -194,6 +204,7 @@ defmodule LQRC.Riak do
     case matchedvals do
       {:ok, vals} ->
         type = spec[:content_type] || "octet/stream"
+
         obj = RObj.update_value(
           update_obj_indexes(spec, RObj.update_content_type(obj, type), vals),
           ContentType.encode(vals, type))
@@ -256,7 +267,7 @@ defmodule LQRC.Riak do
   def genkey(spec, sel) when is_atom(spec), do:
     genkey(LQRC.Domain.read!(spec), sel)
   def genkey(spec, sel) do
-    domain = atom_to_binary spec[:domain]
+    domain = Atom.to_string(spec[:domain])
 
     {bucket, key} = case sel do
       [key] ->
@@ -273,8 +284,9 @@ defmodule LQRC.Riak do
     end
   end
   defp set_key(_dt, nil, _sel, vals), do: vals
-  defp set_key(nil, key, sel, vals), do:
-    List.keystore(vals, key, 0, {key, List.last(sel)})
+  defp set_key(nil, key, sel, vals) do
+    Dict.put(vals, key, List.last(sel))
+  end
   defp set_key(_, _key,_sel, vals), do: vals
 
 
@@ -306,7 +318,7 @@ defmodule LQRC.Riak do
     length(rollback) > 0 and
       :error_logger.error_msg "transaction failed for #{domain} '#{k}': #{Kernel.inspect(err)}"
 
-    lc f inlist rollback do
+    for f <- rollback do
       case f.() do
         :ok -> :ok
         {:ok, _} -> :ok
@@ -320,24 +332,30 @@ defmodule LQRC.Riak do
 
   defp dofun(final, _spec, _funs, _sel, _prepend, _rb) do final end
 
-  # Recursively merge the unsorted lists A and B, picking the last
-  # value from list A if there are any duplicates.
-  def ukeymergerec(a, []), do: a
-  def ukeymergerec([], b), do: b
-  def ukeymergerec([{k, v} | rest], b) do
-    if nil === v or :undefined === v do
-      ukeymergerec(rest, List.keydelete(b, k, 0))
-    else
-      v = case b[k] do
-        oldval when is_list(v) and is_list(oldval) and is_tuple(hd(v)) ->
-          ukeymergerec v, oldval
+  @doc """
+    Recursively the enumerable A into B, always picking items from A
+    if a collision is detected
+  """
+  def ukeymergerec(a, %{} = b) do
+    Enum.reduce a, b, fn
+      ({k, nil}, acc) ->
+        Dict.delete acc, k
 
-        _ ->
-          v
-      end
-
-      List.keysort ukeymergerec(rest, List.keystore(b, k, 0, {k, v})), 0
+      ({k, %{} = v}, acc) ->
+        Dict.put acc, k, (case acc[k] do
+                              %{} = oldval -> ukeymergerec v, oldval;
+                              _            -> v end)
+      ({k, [{_,_}|_] = v}, acc) ->
+        v = Dict.merge %{}, v
+        Dict.put acc, k, (case acc[k] do
+                              %{} = oldval -> ukeymergerec v, oldval;
+                              _            -> v end)
+      ({k, v}, acc) ->
+        Dict.put(acc, k, v)
     end
+  end
+  def ukeymergerec(_a, b) when not is_map(b) do
+    raise ArgumentError, message: "second argument must be a map"
   end
 
   def maybe_expand_idx(idx, spec) when is_atom(spec), do:

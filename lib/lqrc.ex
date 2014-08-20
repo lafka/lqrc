@@ -1,15 +1,15 @@
 defmodule LQRC do
-  use Application.Behaviour
+  use Application
+
+  require LQRC.Domain, as: Domain
+
+  @backend LQRC.Riak
 
   def start(:normal, []) do
     Code.ensure_loaded LQRC.Riak
     :domains = :ets.new(:domains, [:set, :named_table, :public])
     {:ok, self}
   end
-
-  require LQRC.Domain, as: Domain
-
-  @backend LQRC.Riak
 
   def write(domain, sel, vals, opts \\ [], obj \\ nil) do
     call(domain, :write, [sel, vals, opts, obj])
