@@ -50,7 +50,7 @@ defmodule LQRC.Riak do
         end
         encresource = integer_to_binary :binary.decode_unsigned(:erlang.term_to_binary resource), 36
 
-        if Enum.any? unquote(patterns), &unquote(match?).(resource, &1) do
+        if unquote(patterns) === nil or Enum.any? unquote(patterns), &unquote(match?).(resource, &1) do
           File.mkdir_p! unquote(path)
 
           File.write! :filename.join(unquote(path), encresource), :erlang.term_to_binary unquote(obj)
