@@ -15,6 +15,19 @@ defmodule LQRC.Test.Utils do
     end
   end
 
+  defmodule Redis do
+    def maybe_start(image \\ "redis:latest", killonexit? \\ true) do
+      case System.get_env "REDIS_HOST" do
+        nil ->
+          {:ok, cid} = LQRC.Test.Utils.Docker.start image, killonexit?
+          {:ok, {cid, Docker.get_ip(cid)}}
+
+        host ->
+          {:ok, {nil, :erlang.binary_to_list(host)}}
+      end
+    end
+  end
+
   defmodule Riak do
     def maybe_start(image \\ "riak:2.0rc1", killonexit? \\ true) do
       case System.get_env "RIAK_HOST" do
@@ -30,10 +43,7 @@ defmodule LQRC.Test.Utils do
     end
 
     defp wait_for_riak(cid) do
-      {:ok, json} = :erldocker_api.get [:containers, cid, :json], []
-      body = :jsxn.decode :jsx.encode(json)
-      addr = :erlang.binary_to_list(body["NetworkSettings"]["IPAddress"])
-
+      addr = Docker.get_ip cid
       :timer.sleep 15000
 
       Process.flag :trap_exit, true
@@ -112,6 +122,12 @@ defmodule LQRC.Test.Utils do
         {:ok, _} = :erldocker_api.delete [:containers, cid], []
         IO.puts "\ndocker: deleted #{cid}"
       end
+    end
+
+    def get_ip(cid) do
+      {:ok, json} = :erldocker_api.get [:containers, cid, :json], []
+      body = :jsxn.decode :jsx.encode(json)
+      :erlang.binary_to_list(body["NetworkSettings"]["IPAddress"])
     end
   end
 end
