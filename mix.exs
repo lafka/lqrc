@@ -15,6 +15,11 @@ defmodule LRQC.Mixfile do
     ]
   end
 
+#  def testdataset_path, do: :filename.join("./test/dataset/", project[:version])
+   # pattern can either be the exact selector OR if using the `:_`
+   # suffix one can create wildcard patterns
+#  def testdataset_patterns, do: [[:user, :_]]
+
   defp deps do
     [ {:riakc, github: "basho/riak-erlang-client", branch: "master"},
       {:jsx, github: "talentdeficit/jsx", tag: "v1.4.4"},
