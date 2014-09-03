@@ -14,6 +14,9 @@ defmodule LRQC.Mixfile do
     ]
   end
 
+#  def testdataset_path, do: :filename.join("./test/dataset/", project[:version])
+#  def testdataset_patterns, do: nil
+
   defp deps do
     [ {:riakc, github: "basho/riak-erlang-client", branch: "master"},
       {:jsx, "~> 2.0.4", override: true},

@@ -182,6 +182,39 @@ defmodule LQRC.Riak do
   Before writing, indexes will be appended to the document and `vals`
   will be encoded with content type defined in `spec`.
   """
+
+  defmacro write_test_data(spec, sel, obj) do
+    project = Mix.Project.get!
+
+    match? = quote do
+      fn
+        (_sel, nil) -> true
+      end
+    end
+
+    if :test === Mix.env and function_exported?(project, :testdataset_path, 0) do
+      path = project.testdataset_path
+      patterns = case function_exported?(project, :testdataset_path, 0) do
+        true -> project.testdataset_patterns
+        false -> nil
+      end
+
+      quote do
+        resource = case unquote(spec) do
+          unquote(spec) when is_atom(unquote(spec)) -> [unquote(spec) | unquote(sel)]
+          _ -> [unquote(spec)[:domain] | unquote(sel)]
+        end
+        encresource = Integer.to_string :binary.decode_unsigned(:erlang.term_to_binary resource), 36
+
+        if unquote(match?).(resource, unquote(patterns)) do
+          File.mkdir_p! unquote(path)
+
+          File.write! :filename.join(unquote(path), encresource), :erlang.term_to_binary unquote(obj)
+        end
+      end
+    end
+  end
+
   def write_obj(vals, spec, sel, nil, opts) do
     {bucket, key} = genkey spec, sel
 
@@ -208,6 +241,8 @@ defmodule LQRC.Riak do
         obj = RObj.update_value(
           update_obj_indexes(spec, RObj.update_content_type(obj, type), vals),
           ContentType.encode(vals, type))
+
+        write_test_data(spec, sel, obj)
 
         opts = :lists.ukeymerge 1, opts, spec[:riak]
 
