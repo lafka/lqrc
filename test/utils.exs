@@ -4,6 +4,9 @@ defmodule LQRC.Test.Utils do
     maybe_set_endpoint System.get_env("DOCKER_HOST")
   end
 
+  def randomatom, do:
+    String.to_atom(Base.encode64 Float.to_string :random.uniform)
+
   defp maybe_set_endpoint(endpoint) do
     case Application.get_env(:erldocker, :docker_http) do
       ^endpoint ->

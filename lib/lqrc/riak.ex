@@ -40,7 +40,7 @@ defmodule LQRC.Riak do
 
     vals = case vals do
       [] -> %{}
-      [{_,_}|_] -> Dict.merge %{}, vals # convert root level to a map
+      [{_,_}|_] -> Enum.into vals, %{ }# convert root level to a map
       _ -> vals end
 
     ((({:ok, set_key(spec[:datatype], spec[:key], sel, vals)}
@@ -225,10 +225,16 @@ defmodule LQRC.Riak do
     dt = spec[:datatype]
     matchedvals = case spec[:schema] do
       [_|_] = schema ->
-        LQRC.Schema.match schema, vals
+        case LQRC.Schema.match schema, vals do
+          {:ok, _} = res ->
+            res
+
+          {:error, err} ->
+            {:error, Dict.put(err, :resource, Enum.join([spec[:domain] | sel], "/"))}
+        end
 
       _ when nil === dt -> # Make sure values are converted to a map
-        {:ok, Dict.merge(%{}, vals)}
+        {:ok, Enum.into(vals, %{})}
 
       _ ->
         {:ok, vals}
@@ -399,10 +405,10 @@ defmodule LQRC.Riak do
     case List.keyfind spec[:index], idx, 1 do
       nil  -> idx
       {t, k} when is_list(k) ->
-        {:ok, str} = String.to_char_list Enum.join(k, "/")
+        str = String.to_char_list Enum.join(k, "/")
         {t, str}
       {t, k} ->
-        {:ok, str} = String.to_char_list k
+        str = String.to_char_list k
         {t, str}
     end
   end
@@ -423,17 +429,22 @@ defmodule LQRC.Riak do
     update_md_indexes(add_md_index(md, idx, vals), vals, rest)
 
   defp add_md_index(md, {idxtype, k}, vals) when is_list(k) do
-    val = Enum.reduce k, "", fn(k, acc) -> Enum.join([acc, vals[k]], "/") end
+    val = Enum.reduce k, "", fn
+      (k, "") -> vals[k]
+      (k, acc) -> Enum.join([acc, vals[k]], "/")
+    end
     add_md_index2 md, {idxtype, Enum.join(k, "/")}, val
   end
   defp add_md_index(md, {_, k} = idx, vals), do:
     add_md_index2(md, idx, vals[k])
 
   defp add_md_index2(md, _idx, nil), do: md
-  defp add_md_index2(md, idx, [_|_] = val), do:
+  defp add_md_index2(md, idx, val) when is_list(val) or is_map(val) do
     RObj.set_secondary_index(md, {idx, Enum.map(val, &map_hash_idx/1)})
-  defp add_md_index2(md, idx, val), do:
+  end
+  defp add_md_index2(md, idx, val) do
     RObj.set_secondary_index(md, {idx, Enum.map([val], &map_hash_idx/1)})
+  end
 
   defp map_hash_idx({_, idx}), do: idx
   defp map_hash_idx(idx),      do: idx

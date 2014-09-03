@@ -13,11 +13,11 @@ defmodule LQRC.Schema do
   Parse `vals` according to schema, filling in defaults where applicable
   """
   def match(schema, vals, path \\ [], defaults \\ nil) do
-    ctx = matchctx schema, path, defaults || maybe_add_default_vals(schema, path)
+    ctx = matchctx schema, path, defaults || maybe_add_default_vals(schema, path, vals)
 
     case Enum.reduce vals, ctx, &validatepair/2 do
       %{error: nil, acc: acc} = ctx ->
-        {:ok, acc}
+        {:ok, getpath(acc, path)}
 
       %{error: {k, err}} ->
         {:error, %{:key => k, :error => err}}
@@ -36,8 +36,8 @@ defmodule LQRC.Schema do
     }
   end
 
-  defp maybe_add_default_vals(schema, []) do
-    Enum.reduce(schema, %{}, fn({k,v}, acc) ->
+  defp maybe_add_default_vals(schema, [], acc) do
+    Enum.reduce(schema, acc, fn({k,v}, acc) ->
       # @todo; olav; 2014-08-20 - allow wildcard defaults to augment collections
       #parts = String.split(k, ".") |> Enum.reduce(0, fn
       #  ("*", acc) -> [Enum.at(path, length(acc)) | acc]
@@ -50,7 +50,7 @@ defmodule LQRC.Schema do
         val ->
           default = Enum.reverse(String.split(k, ".")) |>
             Enum.reduce(val, fn(nk, acc0) -> Dict.put %{}, nk, acc0 end)
-          LQRC.Riak.ukeymergerec default, acc
+          LQRC.Riak.ukeymergerec acc, default
       end
     end)
   end
@@ -65,13 +65,13 @@ defmodule LQRC.Schema do
 
         case (props[:validator].(v, itempath, schemakey, schema, acc)) do
           :ok ->
-            %{ctx | :acc => Dict.put(acc, k, v)}
+            %{ctx | :acc => updatepath(acc, itempath, v)}
 
           {:ok, newval} ->
-            %{ctx | :acc => Dict.put(acc, k, newval)}
+            %{ctx | :acc => updatepath(acc, itempath, newval)}
 
           :skip ->
-            %{ctx | :acc => Dict.delete(acc, k)}
+            %{ctx | :acc => deletepath(acc, itempath)}
 
           {:error, err} when is_map(err) ->
             %{ctx | :error => {err[:key], err[:error]}}
@@ -94,6 +94,34 @@ defmodule LQRC.Schema do
 
     Enum.filter keys, &Regex.match?(rx, &1)
   end
+
+  # @todo fix tail recursion???
+  def updatepath([], [h | rest], val) when length(rest) > 0, do:
+    Dict.put(%{}, h, updatepath(%{}, rest, val))
+  def updatepath([_|_] = acc, path, val), do:
+    updatepath(Enum.into(acc, %{}), path, val)
+  def updatepath([], [key], val), do:
+    Dict.put(%{}, key, val)
+  def updatepath(acc, [key], val), do:
+    Dict.put(acc, key, val)
+  def updatepath(%{} = acc, [h | rest], val) do
+    Dict.put(acc, h, updatepath(get(acc, h) || %{}, rest, val))
+  end
+
+  def deletepath(nil, _), do: nil
+  def deletepath(acc, [key]), do: Dict.delete(acc, key)
+  def deletepath(acc, [h | rest]), do:
+    Dict.put(acc, h, deletepath(get(acc, h), rest))
+
+  def getpath(nil, _), do: nil
+  def getpath(acc, path) when is_list(acc), do: getpath(Enum.into(acc, %{}), path)
+  def getpath(%{} = acc, []), do: acc
+  def getpath(%{} = acc, [key]), do: acc[key]
+  def getpath(%{} = acc, [h | rest]), do: getpath(get(acc, h), rest)
+
+  defp get(%{} = acc, k), do: acc[k]
+  defp get([], _), do: nil
+  defp get([_|_] = acc, k), do: :proplists.get_value(acc, k, nil)
 
   defp mapprops(:str),             do: mapprops(:string)
   defp mapprops(:regex),           do: mapprops(:string)
@@ -180,7 +208,7 @@ defmodule LQRC.Schema do
     def valid?(val, rk, sk, schema, acc) do
       match = cond do
         is_binary(matchkey = :proplists.get_value(sk, schema, nil)[:match]) ->
-          acc[matchkey]
+          LQRC.Schema.getpath acc, String.split(matchkey, ".")
 
         true ->
           :proplists.get_value(sk, schema, nil)[:match]
@@ -230,14 +258,22 @@ defmodule LQRC.Schema do
   end
 
   defmodule Validators.Map do
-    def valid?(%{} = vals, rk, _sk, schema, acc) do
-      LQRC.Schema.match(schema, vals, rk, acc[List.last(rk)])
+    def valid?(%{} = vals, rk, sk, schema, acc) when map_size(vals) > 0 do
+      LQRC.Schema.match(schema, vals, rk, acc)
+    end
+    def valid?(%{} = vals, rk, sk, schema, acc) when map_size(vals) === 0 do
+      case :proplists.get_value(sk, schema)[:default] do
+        [] -> {:ok, %{}}
+        _ -> LQRC.Schema.match(schema, vals, rk, acc)
+      end
     end
     def valid?([{_,_} | _] = vals, rk, sk, schema, acc) do
-      conv(vals, &LQRC.Schema.match(schema, &1, rk, acc[List.last(rk)]))
+      conv(vals, &LQRC.Schema.match(schema, &1, rk, acc))
     end
     def valid?([_|_], _rk, _sk, _schema, _acc), do:
       {:error, "all map items must be a k/v pair"}
+    def valid?([], _rk, _sk, _schema, _acc), do:
+      {:ok, %{}}
     def valid?(val, _rk, _sk, _schema, _acc), do:
       {:error, "expected item of type 'map'"}
 
