@@ -26,7 +26,7 @@ defmodule LQRC.Domain do
 
   # The LQRC domain used to store domains
   defmacro lqrc do
-    quote do Keyword.merge @defaults, [
+    quote do Dict.merge @defaults, [
       domain: :__lqrc,
       key: nil,
       content_type: "application/x-erlang-binary"] end
@@ -60,11 +60,11 @@ defmodule LQRC.Domain do
   end
 
   def write(domain, props) when is_atom(domain) do
-    match = Keyword.keys @defaults
+    match = Dict.keys @defaults
 
-    props = Keyword.merge @defaults, List.keystore(props, :domain, 0, {:domain, domain})
+    props = Dict.merge @defaults, Dict.put(props, :domain, domain)
 
-    case Enum.reduce match, Keyword.keys(props), fn(a, b) -> b -- [a] end do
+    case Enum.reduce match, Dict.keys(props), fn(a, b) -> b -- [a] end do
       [] ->
         :ets.delete :domains, domain
         LQRC.write lqrc, ["domains", Atom.to_string(domain)], props
