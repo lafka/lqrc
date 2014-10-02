@@ -162,6 +162,13 @@ defmodule LQRC.Schema do
       case :proplists.get_value(sk, schema, nil)[:regex] do
         _ when not is_binary(val) -> {:error, "not a string"}
         nil -> {:ok, val}
+        {Regex, _, regex, _, _} ->
+          {:ok, regex} = Regex.compile regex
+          cond do
+            Regex.match? regex, val -> {:ok, val}
+            true -> {:error, "invalid string format"}
+          end
+
         regex ->
           cond do
             Regex.match? regex, val -> {:ok, val}
