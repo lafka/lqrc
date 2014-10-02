@@ -283,7 +283,7 @@ defmodule LQRC.Riak do
 
   defp decode_md(obj) do
     case RObj.value_count(obj) do
-      1 ->
+      n when n in [0, 1] ->
         vals = RObj.get_update_value obj
         {nil,
          ContentType.decode(vals, RObj.get_update_content_type(obj))}
