@@ -395,6 +395,8 @@ defmodule LQRC.Riak do
         Dict.put(acc, k, v)
     end
   end
+  def ukeymergerec(a, [{_,_}|_] = b), do:
+    ukeymergerec(a, Enum.into(b, %{}))
   def ukeymergerec(_a, b) when not is_map(b) do
     raise ArgumentError, message: "second argument must be a map"
   end
