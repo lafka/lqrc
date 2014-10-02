@@ -46,14 +46,16 @@ defmodule LqrcTest do
   end
 
   test "write resource" do
+    user = "#{genkey}@tiny-mesh.com"
     :ok = LQRC.Domain.write :user, @user
-    assert {:ok, %{"email" => "dev@nyx"}} == LQRC.write :user, ["dev@nyx"], []
+    assert {:ok, %{"email" => user}} == LQRC.write :user, [user], []
   end
 
   test "read resource" do
+    user = "#{genkey}@tiny-mesh.com"
     :ok = LQRC.Domain.write :user, @user
-    assert {:ok, %{"email" => "dev@nyx"}} == LQRC.write :user, ["dev@nyx"], []
-    assert {:ok, %{"email" => "dev@nyx"}} == LQRC.read  :user, ["dev@nyx"]
+    assert {:ok, %{"email" => user}} == LQRC.write :user, [user], []
+    assert {:ok, %{"email" => user}} == LQRC.read  :user, [user]
   end
 
   test "merge resource update" do
@@ -108,9 +110,12 @@ defmodule LqrcTest do
 
   test "get indexed query: range/tagged" do
     :ok = LQRC.Domain.write :rq, []
-    for x <- 33..126, do: LQRC.write(:rq, ["a" <> <<x>>], [])
+    keys = for x <- 33..126 do
+      LQRC.write :rq, [k = "a" <> <<x>>], []
+      k
+    end
 
-    assert {:ok, _keys} = LQRC.range(:rq, ["$key"], "a!", "a~") :: Enum.sort
+    assert keys == (LQRC.range(:rq, ["$key"], "a!", "a~") :: Enum.sort)
     assert {:ok, ["as"]} = LQRC.tagged(:rq, ["$key"], "as")
   end
 
