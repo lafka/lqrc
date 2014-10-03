@@ -65,13 +65,16 @@ defmodule LQRC.Riak do
   def update(spec, sel, vals, opts, obj) do
       {md, oldvals} = decode_md obj
       obj  = if nil != md do RObj.update_metadata obj, md else obj end
-      vals = ukeymergerec vals, oldvals
+      vals = ukeymergerec maybe_call(vals, oldvals), oldvals
 
       putopts = (opts[:putopts] || []) ++ (spec[:riak][:putopts] || [])
       putopts = [:if_not_modified | putopts]
       opts = List.keystore opts, :putopts, 0, {:putopts, putopts}
       write spec, sel, vals, opts, obj, oldvals
   end
+
+  defp maybe_call(vals, oldvals) when is_function(vals), do: vals.(oldvals)
+  defp maybe_call(vals, _oldvals), do: vals
 
   @doc """
   Read the contents of `sel` and maybe issue a write request to
