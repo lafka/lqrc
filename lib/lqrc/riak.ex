@@ -44,9 +44,9 @@ defmodule LQRC.Riak do
       _ -> vals end
 
     ((({:ok, set_key(spec[:datatype], spec[:key], sel, vals)}
-      |> dofun(spec, spec[:prewrite], sel))
-      :: write_obj(spec, sel, obj, opts))
-      :: decode spec)
+        |> dofun(spec, spec[:prewrite], sel))
+        :: write_obj(spec, sel, obj, opts))
+        :: decode spec)
       |> dofun_rollback(spec, spec[:postwrite], sel, [], rollback)
   end
 
@@ -332,7 +332,7 @@ defmodule LQRC.Riak do
 
 
   defp dofun_rollback({:ok, acc, _obj}, spec, funs, sel, prepend, fun), do:
-    dofun({:ok, acc}, spec, funs, sel, prepend, [fn() -> fun.() end])
+    dofun({:ok, acc}, spec, funs, sel, prepend, [fun])
   defp dofun_rollback(res, spec, funs, sel, prepend, _), do:
     dofun(res, spec, funs, sel, prepend, [])
 
