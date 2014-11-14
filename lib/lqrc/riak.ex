@@ -65,13 +65,30 @@ defmodule LQRC.Riak do
   def update(spec, sel, vals, opts, obj) do
       {md, oldvals} = decode_md obj
       obj  = if nil != md do RObj.update_metadata obj, md else obj end
-      vals = ukeymergerec maybe_call(vals, oldvals), oldvals
+      callbacks = (opts[:callbacks] || []) ++ [&ukeymergerec/2]
 
       putopts = (opts[:putopts] || []) ++ (spec[:riak][:putopts] || [])
       putopts = [:if_not_modified | putopts]
       opts = List.keystore opts, :putopts, 0, {:putopts, putopts}
-      write spec, sel, vals, opts, obj, oldvals
+
+      case reduceMaybe maybe_call(vals, oldvals), oldvals, callbacks do
+        {:error, _} = err ->
+          err
+
+        {:ok, vals} ->
+          write spec, sel, vals, opts, obj, oldvals
+
+        vals ->
+          write spec, sel, vals, opts, obj, oldvals
+      end
   end
+
+  defp reduceMaybe(res, _, []), do: res
+  defp reduceMaybe({:error, _} = e, _, _), do: e
+  defp reduceMaybe({:ok, vals}, oldvals, [fun | rest]), do:
+    reduceMaybe(fun.(vals, oldvals), oldvals, rest)
+  defp reduceMaybe(vals, oldvals, [fun | rest]), do:
+    reduceMaybe(fun.(vals, oldvals), oldvals, rest)
 
   defp maybe_call(vals, oldvals) when is_function(vals), do: vals.(oldvals)
   defp maybe_call(vals, _oldvals), do: vals

@@ -300,5 +300,21 @@ defmodule LqrcTest do
     assert {:error, %{error: _, key: ["k"]}} = LQRC.update :memberschema, ["x"], [{"k", "c"}], defopts
   end
 
+  test "test update callbacks" do
+    :ok = LQRC.Domain.write :tcallback, @tdom
+
+    k = genkey
+
+    assert {:ok, newvals} = LQRC.write :t, [k], %{"inc" => 1}
+    assert newvals["inc"]  == 1
+
+    {:ok, newvals} = LQRC.update :t, [k], %{"inc" => 2},
+                                  [riak: [getopts: [:return_body]],
+                                   callbacks: [fn(val, old) ->
+      Dict.put val, "inc", val["inc"] +  old["inc"]
+    end]]
+    assert newvals["inc"]  == 3
+  end
+
   defp genkey, do: :base64.encode(:erlang.term_to_binary :erlang.now)
 end
