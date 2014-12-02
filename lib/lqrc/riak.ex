@@ -245,7 +245,7 @@ defmodule LQRC.Riak do
     dt = spec[:datatype]
     matchedvals = case spec[:schema] do
       [_|_] = schema ->
-        case LQRC.Schema.match schema, vals do
+        case LQRC.Schema.match schema, vals, opts[:schema] do
           {:ok, _} = res ->
             res
 

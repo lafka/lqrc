@@ -2,8 +2,8 @@ defmodule LQRC.Schema do
   @doc """
   Check if `vals` are valid according to `schema`
   """
-  def valid?(schema, vals) do
-    case match schema, vals do
+  def valid?(schema, vals, opts \\ []) do
+    case match schema, vals, opts do
       {:ok, _} -> :ok
       res -> res
     end
@@ -12,10 +12,10 @@ defmodule LQRC.Schema do
   @doc """
   Parse `vals` according to schema, filling in defaults where applicable
   """
-  def match(schema, vals, path \\ [], defaults \\ nil) do
+  def match(schema, vals, opts \\ [], path \\ [], defaults \\ nil) do
     ctx = matchctx schema, path, defaults || maybe_add_default_vals(schema, path, vals)
 
-    case Enum.reduce vals, ctx, &validatepair/2 do
+    case Enum.reduce vals, ctx, &validatepair(&1, &2, opts) do
       %{error: nil, acc: acc} = ctx ->
         {:ok, getpath(acc, path)}
 
@@ -56,14 +56,14 @@ defmodule LQRC.Schema do
   end
   defp maybe_add_default_vals(_schema, _path), do: %{}
 
-  defp validatepair({k, v}, %{error: nil, schema: schema, acc: acc, path: path} = ctx) do
+  defp validatepair({k, v}, %{error: nil, schema: schema, acc: acc, path: path} = ctx, opts) do
     itempath = path ++ [k]
 
     case findkey itempath, Dict.keys(schema) do
       [schemakey | _] ->
         props = :proplists.get_value schemakey, schema
 
-        case (props[:validator].(v, itempath, schemakey, schema, acc)) do
+        case (props[:validator].(v, itempath, schemakey, schema, acc, opts)) do
           :ok ->
             %{ctx | :acc => updatepath(acc, itempath, v)}
 
@@ -84,7 +84,7 @@ defmodule LQRC.Schema do
         %{ctx | :error => {:noschema, path ++ [k]}}
     end
   end
-  defp validatepair({k, v}, %{error: err} = ctx) when err !== nil, do: ctx
+  defp validatepair({k, v}, %{error: err} = ctx, _opts) when err !== nil, do: ctx
 
   defp findkey(path, keys) do
     key = Enum.join path, "."
@@ -127,38 +127,38 @@ defmodule LQRC.Schema do
   defp mapprops(:regex),           do: mapprops(:string)
   defp mapprops(:int),             do: mapprops(:integer)
   defp mapprops(:id),              do: [type: :string,
-                                        validator: &__MODULE__.Validators.String.valid?/5,
+                                        validator: &__MODULE__.Validators.String.valid?/6,
                                         regex: ~r/^[a-zA-Z0-9+-]+$/]
   defp mapprops(:resource),        do: [type: :string,
-                                        validator: &__MODULE__.Validators.String.valid?/5,
+                                        validator: &__MODULE__.Validators.String.valid?/6,
                                         regex: ~r/^[a-zA-Z0-9-+\/]+$/]
   defp mapprops(:string),          do: [type: :string,
-                                        validator: &__MODULE__.Validators.String.valid?/5]
+                                        validator: &__MODULE__.Validators.String.valid?/6]
   defp mapprops(:integer),         do: [type: :integer,
-                                        validator: &__MODULE__.Validators.Integer.valid?/5]
+                                        validator: &__MODULE__.Validators.Integer.valid?/6]
   defp mapprops(:enum),            do: [type: :enum,
-                                        validator: &__MODULE__.Validators.Enum.valid?/5]
+                                        validator: &__MODULE__.Validators.Enum.valid?/6]
   defp mapprops(:set),             do: [type: :set,
-                                        validator: &__MODULE__.Validators.Set.valid?/5]
+                                        validator: &__MODULE__.Validators.Set.valid?/6]
   defp mapprops(:'list/id'),       do: [type: :set,
-                                        validator: &__MODULE__.Validators.Set.valid?/5,
+                                        validator: &__MODULE__.Validators.Set.valid?/6,
                                         itemvalidator: {
-                                          &__MODULE__.Validators.String.valid?/5,
+                                          &__MODULE__.Validators.String.valid?/6,
                                           mapprops(:id)}]
   defp mapprops(:'list/resource'), do:  [type: :set,
-                                        validator: &__MODULE__.Validators.Set.valid?/5,
+                                        validator: &__MODULE__.Validators.Set.valid?/6,
                                         itemvalidator: {
-                                          &__MODULE__.Validators.String.valid?/5,
+                                          &__MODULE__.Validators.String.valid?/6,
                                           mapprops(:resource)}]
   defp mapprops(:map),             do: [type: :map,
-                                        validator: &__MODULE__.Validators.Map.valid?/5]
+                                        validator: &__MODULE__.Validators.Map.valid?/6]
   defp mapprops(:'list/hash'),     do: [type: :map,
-                                        validator: &__MODULE__.Validators.Map.valid?/5]
+                                        validator: &__MODULE__.Validators.Map.valid?/6]
   defp mapprops(:ignore),          do: [type: :ignore,
-                                        validator: &__MODULE__.Validators.Ignore.valid?/5]
+                                        validator: &__MODULE__.Validators.Ignore.valid?/6]
 
   defmodule Validators.String do
-    def valid?(val, _rkey, sk, schema, _acc) do
+    def valid?(val, _rkey, sk, schema, _acc, _opts) do
       case :proplists.get_value(sk, schema, nil)[:regex] do
         _ when not is_binary(val) -> {:error, "not a string"}
         nil -> {:ok, val}
@@ -179,7 +179,7 @@ defmodule LQRC.Schema do
   end
 
   defmodule Validators.Integer do
-    def valid?(val, _rkey, sk, schema, _acc) when is_integer(val) do
+    def valid?(val, _rkey, sk, schema, _acc, _opts) when is_integer(val) do
       max = :proplists.get_value(sk, schema, nil)[:max]
       min = :proplists.get_value(sk, schema, nil)[:min]
 
@@ -200,10 +200,10 @@ defmodule LQRC.Schema do
           :ok
       end
     end
-    def valid?(val, rkey, sk, schema, acc) when is_binary(val) do
+    def valid?(val, rkey, sk, schema, acc, opts) when is_binary(val) do
       case Integer.parse(val) do
         {val, ""} ->
-          valid?(val, rkey, sk, schema, acc)
+          valid?(val, rkey, sk, schema, acc, opts)
 
         error ->
           {:error, "not a valid integer"}
@@ -212,7 +212,7 @@ defmodule LQRC.Schema do
   end
 
   defmodule Validators.Enum do
-    def valid?(val, rk, sk, schema, acc) do
+    def valid?(val, rk, sk, schema, acc, _opts) do
       match = cond do
         is_binary(matchkey = :proplists.get_value(sk, schema, nil)[:match]) ->
           LQRC.Schema.getpath acc, String.split(matchkey, ".")
@@ -240,14 +240,14 @@ defmodule LQRC.Schema do
   end
 
   defmodule Validators.Set do
-    def valid?(val, rk, sk, schema, acc) when is_list(val) do
+    def valid?(val, rk, sk, schema, acc, opts) when is_list(val) do
       case :proplists.get_value(sk, schema, nil)[:itemvalidator] do
         {nil, _} ->
           :ok
 
         {validator, props} ->
           pos = Enum.find_index val, fn(v) ->
-            case validator.(v, rk, props, schema, acc) do
+            case validator.(v, rk, props, schema, acc, opts) do
               {:ok, _} -> false
               :ok      -> false
               _        -> true
@@ -260,28 +260,28 @@ defmodule LQRC.Schema do
           end
       end
     end
-    def valid?(_val, _rkey, _sk, _schema, _acc), do:
+    def valid?(_val, _rkey, _sk, _schema, _acc, _opts), do:
       {:error, "key is not a set"}
   end
 
   defmodule Validators.Map do
-    def valid?(%{} = vals, rk, sk, schema, acc) when map_size(vals) > 0 do
-      LQRC.Schema.match(schema, vals, rk, acc)
+    def valid?(%{} = vals, rk, sk, schema, acc, opts) when map_size(vals) > 0 do
+      LQRC.Schema.match(schema, vals, opts, rk, acc)
     end
-    def valid?(%{} = vals, rk, sk, schema, acc) when map_size(vals) === 0 do
+    def valid?(%{} = vals, rk, sk, schema, acc, opts) when map_size(vals) === 0 do
       case :proplists.get_value(sk, schema)[:default] do
         [] -> {:ok, %{}}
-        _ -> LQRC.Schema.match(schema, vals, rk, acc)
+        _ -> LQRC.Schema.match(schema, vals, opts, rk, acc)
       end
     end
-    def valid?([{_,_} | _] = vals, rk, sk, schema, acc) do
-      conv(vals, &LQRC.Schema.match(schema, &1, rk, acc))
+    def valid?([{_,_} | _] = vals, rk, sk, schema, acc, opts) do
+      conv(vals, &LQRC.Schema.match(schema, &1, opts, rk, acc))
     end
-    def valid?([_|_], _rk, _sk, _schema, _acc), do:
+    def valid?([_|_], _rk, _sk, _schema, _acc, _opts), do:
       {:error, "all map items must be a k/v pair"}
-    def valid?([], _rk, _sk, _schema, _acc), do:
+    def valid?([], _rk, _sk, _schema, _acc, _opts), do:
       {:ok, %{}}
-    def valid?(val, _rk, _sk, _schema, _acc), do:
+    def valid?(val, _rk, _sk, _schema, _acc, _opts), do:
       {:error, "expected item of type 'map'"}
 
     defp conv(vals, csp), do:
@@ -295,7 +295,7 @@ defmodule LQRC.Schema do
   end
 
   defmodule Validators.Ignore do
-    def valid?(val, _rk, sk, schema, _acc) do
+    def valid?(val, _rk, sk, schema, _acc, _opts) do
       case :proplists.get_value(sk, schema, nil)[:delete] do
         nil   -> :skip
         true  -> :skip
