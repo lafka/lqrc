@@ -4,7 +4,9 @@ defmodule LRQC.Mixfile do
   def project do
     [ app: :lqrc,
       version: "0.2.1",
-      deps: deps ]
+      deps: deps,
+      aliases: aliases
+    ]
   end
 
   def application do
@@ -24,4 +26,16 @@ defmodule LRQC.Mixfile do
       {:pooler, github: "seth/pooler", tag: "1.0.0"}
     ]
   end
+
+  defp aliases do
+    ["deps.compile": &fix_riak_pb_deps/1]
+  end
+
+  # this shit is the worst, waiting for riakc to tag a new release
+  # upstream so we can avoid this fucking shit....
+  defp fix_riak_pb_deps(args) do
+    System.cmd System.cwd <> "/deps/riak_pb/rebar", ["clean", "compile", "deps_dir= ."], [cd: "./deps/riak_pb"]
+    Mix.Task.run "deps.compile", args
+  end
+
 end
