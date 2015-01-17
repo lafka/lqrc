@@ -19,9 +19,9 @@ defmodule LRQC.Mixfile do
 
   defp deps do
     [ {:riakc, github: "basho/riak-erlang-client", branch: "master"},
-      {:jsx, "~> 2.0.4", override: true},
-      {:jsxn, "~> 0.2.1"},
-      {:pooler, github: "seth/pooler", tag: "1.0.0"},
-      {:erldocker, github: "proger/erldocker", only: :test, env: :test}]
+      {:json, github: "talentdeficit/json", ref: "5eecb423e04124f74e4402923c47fe4f4d2f5653"},
+      {:json_patch_tests, github: "json-patch/json-patch-tests", app: false, compile: false, override: true},
+      {:pooler, github: "seth/pooler", tag: "1.0.0"}
+    ]
   end
 end

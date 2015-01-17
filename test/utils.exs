@@ -1,6 +1,6 @@
 defmodule LQRC.Test.Utils do
   def init do
-    {:ok, _} = Application.ensure_all_started :erldocker
+    # {:ok, _} = Application.ensure_all_started :erldocker
     maybe_set_endpoint System.get_env("DOCKER_HOST")
   end
 
