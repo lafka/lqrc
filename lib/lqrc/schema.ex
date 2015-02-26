@@ -1,4 +1,14 @@
 defmodule LQRC.Schema do
+
+
+  defmodule Vals do
+    def get(k, v) when is_atom(k), do: Dict.get(v, k)
+    def get(k, v) when is_list(v), do: :proplists.get_value(k, v, nil)
+    def get(k, v), do: Dict.get(v, k)
+  end
+
+  alias LQRC.Schema.Vals
+
   @doc """
   Check if `vals` are valid according to `schema`
   """
@@ -13,7 +23,7 @@ defmodule LQRC.Schema do
   Parse `vals` according to schema, filling in defaults where applicable
   """
   def match(schema, vals, opts \\ [], path \\ [], defaults \\ nil) do
-    ctx = matchctx schema, path, defaults || maybe_add_default_vals(schema, path, vals)
+    ctx = matchctx schema, path, defaults || maybe_add_default_vals(schema, path, vals, opts)
 
     case Enum.reduce vals, ctx, &validatepair(&1, &2, opts) do
       %{error: nil, acc: acc} = ctx ->
@@ -36,7 +46,32 @@ defmodule LQRC.Schema do
     }
   end
 
-  defp maybe_add_default_vals(schema, [], acc) do
+  defp filtermatch?(item, opts) do
+    case {item[:filtermatch], opts[:skip_match_filter]} do
+      {_, true} -> true
+      {nil, _} -> true
+      {items, _} ->
+        Enum.all? items, fn({k, matchRules}) ->
+          case opts[k] do
+            nil ->
+              true
+
+            expect ->
+              # positive matches are OR and negative matches are AND
+              {neg, pos} = Enum.reduce matchRules, {nil, nil}, fn
+                ({:!, match}, {nil, pos}) -> {match !== expect, pos}
+                ({:!, match}, {neg, pos}) -> {neg and match !== expect, pos}
+                (match, {neg, nil}) -> {neg, match === expect}
+                (match, {neg, pos}) -> {neg, pos || match === expect}
+              end
+
+              neg || pos
+          end
+        end
+    end
+  end
+
+  defp maybe_add_default_vals(schema, [], acc, opts) do
     Enum.reduce(schema, acc, fn({k,v}, acc) ->
       # @todo; olav; 2014-08-20 - allow wildcard defaults to augment collections
       #parts = String.split(k, ".") |> Enum.reduce(0, fn
@@ -45,12 +80,13 @@ defmodule LQRC.Schema do
       #end) |> Enum.reverse
       #prefix? = :lists.prefix path, parts
 
+      match? = filtermatch?(v, opts)
       case v[:default] do
-        nil -> acc
-        val ->
+        val when val !== nil and match? ->
           default = Enum.reverse(String.split(k, ".")) |>
             Enum.reduce(val, fn(nk, acc0) -> Dict.put %{}, nk, acc0 end)
           LQRC.Riak.ukeymergerec acc, default
+        _ -> acc
       end
     end)
   end
@@ -61,14 +97,22 @@ defmodule LQRC.Schema do
 
     case findkey itempath, Dict.keys(schema) do
       [schemakey | _] ->
-        props = :proplists.get_value schemakey, schema
+        props = Vals.get schemakey, schema
+
+        match? = filtermatch?(props, opts)
 
         case (props[:validator].(v, itempath, schemakey, schema, acc, opts)) do
-          :ok ->
+          :ok when match? ->
             %{ctx | :acc => updatepath(acc, itempath, v)}
 
-          {:ok, newval} ->
+          {:ok, newval} when match? ->
             %{ctx | :acc => updatepath(acc, itempath, newval)}
+
+          {:ok, _} ->
+            %{ctx | :acc => deletepath(acc, itempath)}
+
+          :ok ->
+            %{ctx | :acc => deletepath(acc, itempath)}
 
           :skip ->
             %{ctx | :acc => deletepath(acc, itempath)}
@@ -158,8 +202,10 @@ defmodule LQRC.Schema do
                                         validator: &__MODULE__.Validators.Ignore.valid?/6]
 
   defmodule Validators.String do
+    alias LQRC.Schema.Vals
+
     def valid?(val, _rkey, sk, schema, _acc, _opts) do
-      case :proplists.get_value(sk, schema, nil)[:regex] do
+      case Vals.get(sk, schema)[:regex] do
         _ when not is_binary(val) -> {:error, "not a string"}
         nil -> {:ok, val}
         {Regex, _, regex, _, _} ->
@@ -179,9 +225,11 @@ defmodule LQRC.Schema do
   end
 
   defmodule Validators.Integer do
+    alias LQRC.Schema.Vals
+
     def valid?(val, _rkey, sk, schema, _acc, _opts) when is_integer(val) do
-      max = :proplists.get_value(sk, schema, nil)[:max]
-      min = :proplists.get_value(sk, schema, nil)[:min]
+      max = Vals.get(sk, schema)[:max]
+      min = Vals.get(sk, schema)[:min]
 
       cond do
         nil == max and nil == min ->
@@ -212,16 +260,18 @@ defmodule LQRC.Schema do
   end
 
   defmodule Validators.Enum do
+    alias LQRC.Schema.Vals
+
     def valid?(val, rk, sk, schema, acc, _opts) do
       match = cond do
-        is_binary(matchkey = :proplists.get_value(sk, schema, nil)[:match]) ->
+        is_binary(matchkey = Vals.get(sk, schema)[:match]) ->
           LQRC.Schema.getpath acc, String.split(matchkey, ".")
 
         true ->
-          :proplists.get_value(sk, schema, nil)[:match]
+          Vals.get(sk, schema)[:match]
       end
 
-      match = if (:proplists.get_value(sk, schema, nil)[:map] || false) and match !== nil do
+      match = if (Vals.get(sk, schema)[:map] || false) and match !== nil do
         Dict.keys match
       else
         match
@@ -240,8 +290,10 @@ defmodule LQRC.Schema do
   end
 
   defmodule Validators.Set do
+    alias LQRC.Schema.Vals
+
     def valid?(val, rk, sk, schema, acc, opts) when is_list(val) do
-      case :proplists.get_value(sk, schema, nil)[:itemvalidator] do
+      case Vals.get(sk, schema)[:itemvalidator] do
         {nil, _} ->
           :ok
 
@@ -265,11 +317,13 @@ defmodule LQRC.Schema do
   end
 
   defmodule Validators.Map do
+    alias LQRC.Schema.Vals
+
     def valid?(%{} = vals, rk, sk, schema, acc, opts) when map_size(vals) > 0 do
       LQRC.Schema.match(schema, vals, opts, rk, acc)
     end
     def valid?(%{} = vals, rk, sk, schema, acc, opts) when map_size(vals) === 0 do
-      case :proplists.get_value(sk, schema)[:default] do
+      case Vals.get(sk, schema)[:default] do
         [] -> {:ok, %{}}
         _ -> LQRC.Schema.match(schema, vals, opts, rk, acc)
       end
@@ -295,8 +349,10 @@ defmodule LQRC.Schema do
   end
 
   defmodule Validators.Ignore do
+    alias LQRC.Schema.Vals
+
     def valid?(val, _rk, sk, schema, _acc, _opts) do
-      case :proplists.get_value(sk, schema, nil)[:delete] do
+      case Vals.get(sk, schema)[:delete] do
         nil   -> :skip
         true  -> :skip
         false -> {:ok, val}

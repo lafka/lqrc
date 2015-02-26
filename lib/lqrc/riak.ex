@@ -56,13 +56,21 @@ defmodule LQRC.Riak do
   @todo 2014-01-14; add support for rolling back partial fails
   """
   def update(spec, sel, vals, opts, nil) do
-    case read_obj spec, sel, opts do
-      {:ok, obj} -> update spec, sel, vals, opts, obj
-      err -> err
+    case matchSchema spec, sel, vals, opts do
+      {:ok, vals} ->
+        case read_obj spec, sel, opts do
+          {:ok, obj} -> update spec, sel, vals, opts, obj
+          err -> err
+        end
+
+      {:error, _} = err ->
+        err
     end
   end
 
   def update(spec, sel, vals, opts, obj) do
+    # Skip matchSchema here as this might be a rollback in which case
+    # someone fucked up (blame me :/)
       {md, oldvals} = decode_md obj
       obj  = if nil != md do RObj.update_metadata obj, md else obj end
       callbacks = (opts[:callbacks] || []) ++ [&ukeymergerec/2]
@@ -82,6 +90,27 @@ defmodule LQRC.Riak do
           write spec, sel, vals, opts, obj, oldvals
       end
   end
+
+  defp matchSchema(spec, sel, vals, opts) do
+    dt = spec[:datatype]
+    case spec[:schema] do
+      schema when (is_list(schema) and [] !== schema) or is_map(schema) ->
+        case LQRC.Schema.match schema, vals, opts do
+          {:ok, _} = res ->
+            res
+
+          {:error, err} ->
+            {:error, Dict.put(err, :resource, Enum.join([spec[:domain] | sel], "/"))}
+        end
+
+      _ when nil === dt -> # Make sure values are converted to a map
+        {:ok, Enum.into(vals, %{})}
+
+      _ ->
+        {:ok, vals}
+    end
+  end
+
 
   defp reduceMaybe(res, _, []), do: res
   defp reduceMaybe({:error, _} = e, _, _), do: e
@@ -242,24 +271,8 @@ defmodule LQRC.Riak do
     write_obj vals, spec, sel, obj, opts
   end
   def write_obj(vals, spec, sel, obj, opts) do
-    dt = spec[:datatype]
-    matchedvals = case spec[:schema] do
-      [_|_] = schema ->
-        case LQRC.Schema.match schema, vals, opts[:schema] do
-          {:ok, _} = res ->
-            res
-
-          {:error, err} ->
-            {:error, Dict.put(err, :resource, Enum.join([spec[:domain] | sel], "/"))}
-        end
-
-      _ when nil === dt -> # Make sure values are converted to a map
-        {:ok, Enum.into(vals, %{})}
-
-      _ ->
-        {:ok, vals}
-    end
-
+    opts = Dict.put(opts, :skip_match_filter, true)
+    matchedvals = matchSchema spec, sel, vals, opts
     case matchedvals do
       {:ok, vals} ->
         type = spec[:content_type] || "octet/stream"

@@ -134,4 +134,45 @@ defmodule SchemaTest do
       {"list", [{"resource", ["a/b", 1]}]}]
 
   end
+
+  test "match_action" do
+    schema = %{
+      "for-first" => [type: :str, filtermatch: %{action: [:first]}],
+      "for-second"=> [type: :str, filtermatch: %{action: [:second]}],
+      "default"   => [type: :str, filtermatch: %{action: [:default, :second]}, default: "default"],
+    }
+
+    vals = %{
+      "for-first" => "first",
+      "for-second" => "second"
+    }
+
+    assert {:ok, %{"for-first" => "first"}} === Schema.match schema, vals, action: :first
+    assert {:ok, %{
+      "for-second" => "second",
+      "default" => "default"
+    }} === Schema.match schema, vals, action: :second
+    assert {:ok, %{"default" => "default"}} === Schema.match schema, vals, action: :default
+  end
+
+  test "match action {!neg, action}" do
+    schema = %{
+      "for-first" => [type: :str, filtermatch: %{action: [{:!, :second}]}],
+      "for-second"=> [type: :str, filtermatch: %{action: [{:!, :first}]}],
+      "default"   => [type: :str, filtermatch: %{action: [:default]}, default: "default"],
+    }
+
+    vals = %{
+      "for-first" => "first",
+      "for-second" => "second"
+    }
+
+    assert {:ok, %{"for-first" => "first"}} === Schema.match schema, vals, action: :first
+    assert {:ok, %{"for-second" => "second"}} === Schema.match schema, vals, action: :second
+    assert {:ok, %{
+        "for-first" => "first",
+        "for-second" => "second",
+        "default" => "default",
+    }} === Schema.match schema, vals, action: :default
+  end
 end
