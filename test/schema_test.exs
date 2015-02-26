@@ -175,4 +175,14 @@ defmodule SchemaTest do
         "default" => "default",
     }} === Schema.match schema, vals, action: :default
   end
+
+  test "function for generating default" do
+    default = fn -> "generated" end
+    schema = %{
+      "default"   => [type: :str, default: default],
+    }
+
+
+    assert {:ok, %{"default" => "generated"}} === Schema.match schema, %{}
+  end
 end

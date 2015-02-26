@@ -83,8 +83,16 @@ defmodule LQRC.Schema do
       match? = filtermatch?(v, opts)
       case v[:default] do
         val when val !== nil and match? ->
+          val = if is_function(val) do
+            val.()
+          else
+            val
+          end
+
           default = Enum.reverse(String.split(k, ".")) |>
-            Enum.reduce(val, fn(nk, acc0) -> Dict.put %{}, nk, acc0 end)
+            Enum.reduce(val, fn(nk, acc0) ->
+              Dict.put %{}, nk, acc0
+            end)
           LQRC.Riak.ukeymergerec acc, default
         _ -> acc
       end
