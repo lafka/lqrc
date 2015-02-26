@@ -56,6 +56,7 @@ defmodule LQRC.Riak do
   @todo 2014-01-14; add support for rolling back partial fails
   """
   def update(spec, sel, vals, opts, nil) do
+    opts = Dict.put opts, :skip_defaults, true
     case matchSchema spec, sel, vals, opts do
       {:ok, vals} ->
         case read_obj spec, sel, opts do
@@ -283,13 +284,13 @@ defmodule LQRC.Riak do
 
         write_test_data(spec, sel, obj)
 
-        opts = :lists.ukeymerge 1, opts, spec[:riak]
+        putopts = :lists.umerge (opts[:putopts] || []), (spec[:riak][:putopts] || [])
 
         case spec[:datatype] do
-          nil -> with_pid &PB.put(&1, obj, opts[:putopts]), opts[:pid]
+          nil -> with_pid &PB.put(&1, obj, putopts), opts[:pid]
           type ->
             {bucket, key} = genkey spec, sel
-            with_pid &PB.update_type(&1, bucket, key, type.to_op(vals), opts[:putopts]), opts[:pid]
+            with_pid &PB.update_type(&1, bucket, key, type.to_op(vals), putopts), opts[:pid]
         end
 
       {:error, _} = err -> err

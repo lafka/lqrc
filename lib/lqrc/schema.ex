@@ -23,7 +23,13 @@ defmodule LQRC.Schema do
   Parse `vals` according to schema, filling in defaults where applicable
   """
   def match(schema, vals, opts \\ [], path \\ [], defaults \\ nil) do
-    ctx = matchctx schema, path, defaults || maybe_add_default_vals(schema, path, vals, opts)
+    defaults = case {defaults, opts[:skip_defaults]} do
+      {nil, true} -> %{}
+      {nil, _} -> maybe_add_default_vals(schema, path, vals, opts)
+      {defaults, _} -> defaults
+    end
+
+    ctx = matchctx schema, path, defaults
 
     case Enum.reduce vals, ctx, &validatepair(&1, &2, opts) do
       %{error: nil, acc: acc} = ctx ->
