@@ -166,10 +166,13 @@ defmodule LQRC.Schema do
     Dict.put(acc, h, updatepath(get(acc, h) || %{}, rest, val))
   end
 
-  def deletepath(nil, _), do: nil
   def deletepath(acc, [key]), do: Dict.delete(acc, key)
-  def deletepath(acc, [h | rest]), do:
-    Dict.put(acc, h, deletepath(get(acc, h), rest))
+  def deletepath(acc, [h | rest]) do
+    case get(acc, h) do
+      nil -> acc
+      sub -> Dict.put(acc, h, deletepath(sub, rest))
+    end
+  end
 
   def getpath(nil, _), do: nil
   def getpath(acc, path) when is_list(acc), do: getpath(Enum.into(acc, %{}), path)
@@ -334,16 +337,23 @@ defmodule LQRC.Schema do
     alias LQRC.Schema.Vals
 
     def valid?(%{} = vals, rk, sk, schema, acc, opts) when map_size(vals) > 0 do
-      LQRC.Schema.match(schema, vals, opts, rk, acc)
+      case LQRC.Schema.match(schema, vals, opts, rk, acc) do
+        {:ok, nil} -> :skip
+        res -> res
+      end
     end
     def valid?(%{} = vals, rk, sk, schema, acc, opts) when map_size(vals) === 0 do
       case Vals.get(sk, schema)[:default] do
         [] -> {:ok, %{}}
-        _ -> LQRC.Schema.match(schema, vals, opts, rk, acc)
+        _ ->
+          case LQRC.Schema.match(schema, vals, opts, rk, acc) do
+            {:ok, nil} -> :skip
+            res -> res
+          end
       end
     end
     def valid?([{_,_} | _] = vals, rk, sk, schema, acc, opts) do
-      conv(vals, &LQRC.Schema.match(schema, &1, opts, rk, acc))
+      conv(vals, &valid?(&1, rk, sk, schema, acc, opts))
     end
     def valid?([_|_], _rk, _sk, _schema, _acc, _opts), do:
       {:error, "all map items must be a k/v pair"}
