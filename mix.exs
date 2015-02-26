@@ -3,7 +3,7 @@ defmodule LRQC.Mixfile do
 
   def project do
     [ app: :lqrc,
-      version: "0.2.1",
+      version: "0.2.2-dev",
       deps: deps,
       aliases: aliases
     ]
