@@ -197,6 +197,8 @@ defmodule LQRC.Schema do
                                         validator: &__MODULE__.Validators.String.valid?/6]
   defp mapprops(:integer),         do: [type: :integer,
                                         validator: &__MODULE__.Validators.Integer.valid?/6]
+  defp mapprops(:float),           do: [type: :float,
+                                        validator: &__MODULE__.Validators.Float.valid?/6]
   defp mapprops(:enum),            do: [type: :enum,
                                         validator: &__MODULE__.Validators.Enum.valid?/6]
   defp mapprops(:set),             do: [type: :set,
@@ -276,6 +278,46 @@ defmodule LQRC.Schema do
     end
   end
 
+  defmodule Validators.Float do
+    def valid?(val, _rkey, sk, schema, _acc, _opts) when is_float(val) do
+      max = :proplists.get_value(sk, schema, nil)[:max]
+      min = :proplists.get_value(sk, schema, nil)[:min]
+
+      cond do
+        nil == max and nil == min ->
+          :ok
+
+        is_integer(max) and is_integer(min) and val < min and val > max ->
+          {:error, "value must be in range #{min}..#{max}"}
+
+        is_integer(max) and val > max ->
+          {:error, "value must smaller than #{max}"}
+
+        is_integer(min) and val < min ->
+          {:error, "value must greater than #{min}"}
+
+        true ->
+          :ok
+      end
+    end
+    def valid?(val, rkey, sk, schema, acc, opts) when is_binary(val) do
+      case Float.parse(val) do
+        {val, ""} ->
+          valid?(val, rkey, sk, schema, acc, opts)
+
+        error ->
+          {:error, "not a valid float"}
+      end
+    end
+    def valid?(val, rkey, sk, schema, acc, opts) do
+      if true === opts[:acceptint] and is_integer(val) do
+        valid?(val + 0.0, rkey, sk, schema, acc, opts)
+      else
+        {:error, "not a valid float"}
+      end
+    end
+  end
+
   defmodule Validators.Enum do
     alias LQRC.Schema.Vals
 
@@ -311,6 +353,9 @@ defmodule LQRC.Schema do
 
     def valid?(val, rk, sk, schema, acc, opts) when is_list(val) do
       case Vals.get(sk, schema)[:itemvalidator] do
+        nil ->
+          :ok
+
         {nil, _} ->
           :ok
 
