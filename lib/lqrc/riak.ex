@@ -57,7 +57,8 @@ defmodule LQRC.Riak do
   """
   def update(spec, sel, vals, opts, nil) do
     opts = Dict.put opts, :skip_defaults, true
-    case matchSchema spec, sel, vals, opts do
+    aspartialOpts = Dict.put opts, :partial, true
+    case matchSchema spec, sel, vals, aspartialOpts do
       {:ok, vals} ->
         case read_obj spec, sel, opts do
           {:ok, obj} -> update spec, sel, vals, opts, obj

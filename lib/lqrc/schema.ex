@@ -324,7 +324,7 @@ defmodule LQRC.Schema do
   defmodule Validators.Enum do
     alias LQRC.Schema.Vals
 
-    def valid?(val, rk, sk, schema, acc, _opts) do
+    def valid?(val, rk, sk, schema, acc, opts) do
       match = cond do
         is_binary(matchkey = Vals.get(sk, schema)[:match]) ->
           LQRC.Schema.getpath acc, String.split(matchkey, ".")
@@ -339,7 +339,7 @@ defmodule LQRC.Schema do
         match
       end
 
-      case match !== nil and val in match do
+      case (match !== nil and val in match) || true === opts[:partial] do
         true -> {:ok, val}
 
         false when nil !== match ->
