@@ -403,6 +403,9 @@ defmodule LQRC.Schema do
     def valid?([{_,_} | _] = vals, rk, sk, schema, acc, opts) do
       conv(vals, &valid?(&1, rk, sk, schema, acc, opts))
     end
+    def valid?(nil, rk, sk, schema, acc, opts) do
+      {:ok, nil}
+    end
     def valid?([_|_], _rk, _sk, _schema, _acc, _opts), do:
       {:error, "all map items must be a k/v pair"}
     def valid?([], _rk, _sk, _schema, _acc, _opts), do:
