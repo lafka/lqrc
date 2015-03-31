@@ -411,28 +411,34 @@ defmodule LQRC.Riak do
     Recursively the enumerable A into B, always picking items from A
     if a collision is detected
   """
-  def ukeymergerec(a, %{} = b) do
+  def ukeymergerec(a, b), do: ukeymergerec(a, b, [])
+  def ukeymergerec(a, %{} = b, path) do
     Enum.reduce a, b, fn
       ({k, nil}, acc) ->
         Dict.delete acc, k
 
       ({k, %{} = v}, acc) ->
         Dict.put acc, k, (case acc[k] do
-                              %{} = oldval -> ukeymergerec v, oldval;
+                              %{} = oldval -> ukeymergerec v, oldval, [k | path];
                               _            -> v end)
-      ({k, [{_,_}|_] = v}, acc) ->
-        v = Dict.merge %{}, v
-        Dict.put acc, k, (case acc[k] do
-                              %{} = oldval -> ukeymergerec v, oldval;
-                              _            -> v end)
+      ({k, [{_,_}|rest] = v}, acc) ->
+        case Enum.all? rest, fn({_, _}) -> true; (_) -> false end do
+          true ->
+            v = Dict.merge %{}, v
+            Dict.put acc, k, (case acc[k] do
+                                  %{} = oldval -> ukeymergerec v, oldval, [k | path];
+                                  _            -> v end)
+          false ->
+            raise ArgumentError, message: %{key: [k|path], message: "property list can only contain (k,v) pairs"}
+        end
       ({k, v}, acc) ->
         Dict.put(acc, k, v)
     end
   end
-  def ukeymergerec(a, [{_,_}|_] = b), do:
-    ukeymergerec(a, Enum.into(b, %{}))
-  def ukeymergerec(_a, b) when not is_map(b) do
-    raise ArgumentError, message: "second argument must be a map"
+  def ukeymergerec(a, [{_,_}|_] = b, path), do:
+    ukeymergerec(a, Enum.into(b, %{}), path)
+  def ukeymergerec(_a, b, path) when not is_map(b) do
+    raise ArgumentError, message: %{key: path, message: "second argument must be a map"}
   end
 
   def maybe_expand_idx(idx, spec) when is_atom(spec), do:

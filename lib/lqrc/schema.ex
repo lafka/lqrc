@@ -39,6 +39,8 @@ defmodule LQRC.Schema do
       %{error: {k, err}} ->
         {:error, %{:key => k, :error => err}}
     end
+  rescue e in ArgumentError ->
+    {:error, %{:key => Enum.reverse(e.message.key), :error => e.message.message}}
   end
 
   defp matchctx(schema, path, vals) do
