@@ -1,5 +1,5 @@
 
-defmodule LqrcTest do
+defmodule LqrcFilterMatchTest do
   use ExUnit.Case
 
   require :riakc_pb_socket, as: PB
