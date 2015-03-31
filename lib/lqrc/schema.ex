@@ -29,7 +29,7 @@ defmodule LQRC.Schema do
       {defaults, _} -> defaults
     end
 
-    ctx = matchctx schema, path, LQRC.Riak.ukeymergerec(vals, defaults)
+    ctx = matchctx schema, path, LQRC.Riak.ukeymergerec(vals, defaults, path)
 
 
     case Enum.reduce vals, ctx, &validatepair(&1, &2, opts) do

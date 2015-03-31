@@ -334,7 +334,6 @@ defmodule LQRC.Riak do
             {oldmd, ukeymergerec(val, acc)}
           end
     end
-
   end
 
   @doc """
