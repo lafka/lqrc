@@ -59,9 +59,9 @@ defmodule LQRC.Riak do
     opts = Dict.put opts, :patch, true
     aspartialOpts = Dict.put opts, :partial, true
     case matchSchema spec, sel, vals, aspartialOpts do
-      {:ok, vals} ->
+      {:ok, updatedvals} ->
         case read_obj spec, sel, opts do
-          {:ok, obj} -> update spec, sel, vals, opts, obj
+          {:ok, obj} -> update spec, sel, updatedvals, opts, obj
           err -> err
         end
 
@@ -93,6 +93,8 @@ defmodule LQRC.Riak do
       end
   end
 
+  defp matchSchema(spec, sel, vals, opts) when is_function(vals), do:
+    {:ok, vals}
   defp matchSchema(spec, sel, vals, opts) do
     dt = spec[:datatype]
     case spec[:schema] do
@@ -105,7 +107,7 @@ defmodule LQRC.Riak do
             {:error, Dict.put(err, :resource, Enum.join([spec[:domain] | sel], "/"))}
         end
 
-      _ when nil === dt -> # Make sure values are converted to a map
+      _ when is_list(vals) and nil === dt -> # Make sure values are converted to a map
         {:ok, Enum.into(vals, %{})}
 
       _ ->

@@ -122,6 +122,10 @@ defmodule LQRC.Schema do
           :ok when match? ->
             %{ctx | :acc => updatepath(acc, itempath, v)}
 
+          {:ok, nil} ->
+            %{ctx | :acc => deletepath(acc, itempath)}
+
+
           {:ok, newval} when match? ->
             %{ctx | :acc => updatepath(acc, itempath, newval)}
 
