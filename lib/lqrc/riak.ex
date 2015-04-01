@@ -56,7 +56,7 @@ defmodule LQRC.Riak do
   @todo 2014-01-14; add support for rolling back partial fails
   """
   def update(spec, sel, vals, opts, nil) do
-    opts = Dict.put opts, :skip_defaults, true
+    opts = Dict.put opts, :patch, true
     aspartialOpts = Dict.put opts, :partial, true
     case matchSchema spec, sel, vals, aspartialOpts do
       {:ok, vals} ->

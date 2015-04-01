@@ -23,7 +23,7 @@ defmodule LQRC.Schema do
   Parse `vals` according to schema, filling in defaults where applicable
   """
   def match(schema, vals, opts \\ [], path \\ [], defaults \\ nil) do
-    defaults = case {defaults, opts[:skip_defaults]} do
+    defaults = case {defaults, opts[:patch]} do
       {nil, true} -> %{}
       {nil, _} -> maybe_add_default_vals(schema, path, vals, opts)
       {defaults, _} -> defaults
