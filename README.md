@@ -1,5 +1,7 @@
 # LRQC
 
+**Deprecated**: There was no time to do this properly, use :riakc directly in a simple wrapper class.
+
 Name really has no meaning anymore, it had something todo with Local Riak Query Client
 but remains unchanged for historical reasons. Currently this serves as
 a test for working with Riak 2.0.
